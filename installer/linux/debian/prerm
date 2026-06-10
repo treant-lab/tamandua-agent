@@ -1,0 +1,24 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    remove|upgrade|deconfigure)
+        # Stop the service before removal/upgrade
+        if command -v systemctl > /dev/null 2>&1; then
+            if systemctl is-active --quiet tamandua-agent.service; then
+                echo "Stopping Tamandua agent..."
+                systemctl stop tamandua-agent.service || true
+            fi
+        fi
+        ;;
+
+    failed-upgrade)
+        ;;
+
+    *)
+        echo "prerm called with unknown argument '$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

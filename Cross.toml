@@ -1,0 +1,121 @@
+# Cross.toml - Configuration for cross-rs cross-compilation
+# https://github.com/cross-rs/cross
+#
+# This file configures cross-compilation for ARM64 and other embedded targets.
+# Use with: cross build --release --target <target>
+#
+# Note: eBPF (aya) is disabled for cross-compilation targets because it requires
+# native kernel headers which are not available in cross-compilation containers.
+
+# ============================================================================
+# Build Environment
+# ============================================================================
+
+[build.env]
+passthrough = [
+    "RUST_BACKTRACE",
+    "RUST_LOG",
+    "CARGO_TERM_COLOR",
+    "TAMANDUA_SERVER_URL",
+    "TAMANDUA_AGENT_ID",
+]
+
+# ============================================================================
+# ARM64 Linux (GNU libc) - AWS Graviton, Ampere, generic ARM64 servers
+# ============================================================================
+
+[target.aarch64-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:main"
+# Pre-build commands to install ARM64 dependencies
+pre-build = [
+    "dpkg --add-architecture arm64",
+    "apt-get update",
+    "apt-get install -y --no-install-recommends libpcap-dev:arm64 libssl-dev:arm64",
+]
+
+# ============================================================================
+# ARM64 Linux (musl) - Alpine containers, fully static binaries
+# ============================================================================
+
+[target.aarch64-unknown-linux-musl]
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-musl:main"
+# musl builds produce fully static binaries - no runtime dependencies
+pre-build = [
+    "apk add --no-cache libpcap-dev openssl-dev openssl-libs-static",
+]
+
+# ============================================================================
+# ARMv7 Linux - Raspberry Pi 2/3/4 (32-bit mode)
+# ============================================================================
+
+[target.armv7-unknown-linux-gnueabihf]
+image = "ghcr.io/cross-rs/armv7-unknown-linux-gnueabihf:main"
+pre-build = [
+    "dpkg --add-architecture armhf",
+    "apt-get update",
+    "apt-get install -y --no-install-recommends libpcap-dev:armhf libssl-dev:armhf",
+]
+
+# ============================================================================
+# ARMv6 Linux - Raspberry Pi Zero/1 (older 32-bit ARM)
+# ============================================================================
+
+[target.armv6-unknown-linux-gnueabihf]
+image = "ghcr.io/cross-rs/armv6-unknown-linux-gnueabihf:main"
+# ARMv6 has limited library availability, use minimal dependencies
+pre-build = [
+    "apt-get update",
+    "apt-get install -y --no-install-recommends libssl-dev",
+]
+
+# ============================================================================
+# x86_64 Linux (musl) - Alpine containers, static binaries
+# ============================================================================
+
+[target.x86_64-unknown-linux-musl]
+image = "ghcr.io/cross-rs/x86_64-unknown-linux-musl:main"
+pre-build = [
+    "apk add --no-cache libpcap-dev openssl-dev openssl-libs-static",
+]
+
+# ============================================================================
+# Build Configuration Notes
+# ============================================================================
+#
+# Feature Flags for Cross-Compilation:
+# ------------------------------------
+# When cross-compiling ARM targets, use the following feature flags:
+#
+# - `--no-default-features`: Disables eBPF which requires native kernel headers
+# - `--features compression`: Enable zstd compression (works on all platforms)
+# - `--features yara`: Enable YARA scanning (requires yara libs in pre-build)
+#
+# Example commands:
+# -----------------
+# # AWS Graviton / ARM64 server
+# cross build --release --target aarch64-unknown-linux-gnu \
+#     --no-default-features --features compression
+#
+# # Raspberry Pi 4 (64-bit)
+# cross build --release --target aarch64-unknown-linux-gnu \
+#     --no-default-features
+#
+# # Raspberry Pi 4 (32-bit mode)
+# cross build --release --target armv7-unknown-linux-gnueabihf \
+#     --no-default-features
+#
+# # Raspberry Pi Zero
+# cross build --release --target armv6-unknown-linux-gnueabihf \
+#     --no-default-features
+#
+# # Static binary for containers
+# cross build --release --target aarch64-unknown-linux-musl \
+#     --no-default-features --features compression
+#
+# Testing:
+# --------
+# Cross-compiled binaries cannot run tests (different architecture).
+# Run tests with: cargo test --target x86_64-unknown-linux-gnu
+#
+# Or use QEMU user-mode emulation (slower):
+# cross test --target aarch64-unknown-linux-gnu

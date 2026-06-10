@@ -1,0 +1,131 @@
+# Tamandua Agent Production Configuration
+# =========================================
+# Copy this file to /etc/tamandua/agent.toml and customize as needed.
+# The agent will auto-generate a unique agent_id on first run if not set.
+
+# Unique agent identifier (auto-generated if left as default)
+# Each agent should have a unique UUID
+agent_id = "AUTO_GENERATE"
+
+# Backend server URL (WebSocket endpoint)
+# Replace with your Tamandua server address
+server_url = "wss://tamandua.example.com/socket/agent/websocket"
+
+# Authentication token for backend communication
+# Obtain from Tamandua server admin console
+auth_token = "REPLACE_WITH_YOUR_TOKEN"
+
+# Heartbeat interval in seconds
+heartbeat_interval_seconds = 30
+
+# Telemetry batching configuration
+batch_size = 100
+batch_timeout_seconds = 5
+
+# Reconnection settings
+reconnect_delay_seconds = 5
+max_reconnect_attempts = 0  # 0 = infinite
+
+# Connection timeout in seconds
+connection_timeout_seconds = 30
+
+# Enable YARA scanning (requires yara feature enabled at build time)
+yara_enabled = true
+
+# Enable entropy-based packed/encrypted file detection
+entropy_check_enabled = true
+entropy_threshold = 7.2
+
+# Paths to exclude from monitoring
+excluded_paths = [
+    "/proc",
+    "/sys",
+    "/dev",
+    "/run",
+    "/tmp/.ICE-unix",
+    "/var/lib/docker/overlay2",
+    "/var/lib/containerd",
+]
+
+# Processes to exclude from monitoring
+excluded_processes = [
+    "systemd",
+    "systemd-journald",
+    "systemd-udevd",
+]
+
+# File patterns to monitor
+monitored_file_patterns = [
+    "*.exe",
+    "*.dll",
+    "*.so",
+    "*.sh",
+    "*.py",
+    "*.pl",
+    "*.rb",
+    "*.elf",
+]
+
+# Honeyfile monitoring (canary files)
+honeyfiles_enabled = false
+honeyfile_paths = []
+
+# Transport configuration (failover and certificate pinning)
+[transport]
+backup_servers = []
+cert_pins = []
+
+# TLS configuration
+[tls]
+enabled = true
+skip_verify = false
+# ca_cert = "/etc/tamandua/ca.crt"
+# client_cert = "/etc/tamandua/agent.crt"
+# client_key = "/etc/tamandua/agent.key"
+
+# Collector configuration
+[collectors]
+# Core collectors
+process_enabled = true
+file_enabled = true
+network_enabled = true
+dns_enabled = true
+
+# Advanced detection collectors
+injection_enabled = true
+named_pipes_enabled = false  # Windows only
+usb_enabled = true
+ransomware_canary_enabled = true
+driver_blocklist_enabled = false
+memory_enabled = true
+network_dpi_enabled = true
+network_anomaly_enabled = true
+cloud_enabled = false
+exploit_mitigation_enabled = true
+defense_evasion_enabled = true
+persistence_enabled = true
+script_inspector_enabled = true
+credential_theft_enabled = true
+lateral_movement_enabled = true
+container_enabled = true
+process_hollowing_enabled = true
+scheduled_tasks_enabled = true
+firmware_enabled = false
+clipboard_enabled = false
+browser_protection_enabled = false
+input_capture_enabled = false
+office_email_enabled = false
+ad_monitor_enabled = false
+health_enabled = true
+syscall_evasion_enabled = true
+
+# Windows-specific collectors (ignored on Linux)
+registry_enabled = false
+etw_enabled = false
+amsi_enabled = false
+lsass_enabled = false
+wmi_enabled = false
+clr_enabled = false
+
+# Linux-specific collectors
+ebpf_enabled = false

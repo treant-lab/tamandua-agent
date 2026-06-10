@@ -1,0 +1,42 @@
+# Rust
+/target/
+**/target/
+**/*.rs.bk
+*.pdb
+
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+nul
+
+# Logs / scratch
+*.log
+check_out*.txt
+
+# Testing
+/test_data/
+/quarantine/
+
+# Scratch configs / dev runners (use config/ profiles instead)
+/test_*.toml
+/test-*.toml
+/ultra_minimal.toml
+/quick_test.ps1
+/test_collectors.ps1
+/validate-agent.ps1
+/test_runner.bat
+/test_runner.sh
+/test_macos_injection.sh

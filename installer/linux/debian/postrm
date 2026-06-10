@@ -1,0 +1,61 @@
+#!/bin/bash
+set -e
+
+TAMANDUA_USER="tamandua"
+TAMANDUA_GROUP="tamandua"
+CONFIG_DIR="/etc/tamandua"
+DATA_DIR="/var/lib/tamandua"
+LOG_DIR="/var/log/tamandua"
+RUN_DIR="/run/tamandua"
+
+case "$1" in
+    remove)
+        # Disable the service
+        if command -v systemctl > /dev/null 2>&1; then
+            systemctl disable tamandua-agent.service 2>/dev/null || true
+            systemctl daemon-reload
+        fi
+
+        # Remove runtime directory
+        rm -rf "$RUN_DIR"
+
+        echo "Tamandua agent removed."
+        echo "Configuration and data preserved in $CONFIG_DIR and $DATA_DIR"
+        echo "To completely remove all data, run: rm -rf $CONFIG_DIR $DATA_DIR $LOG_DIR"
+        ;;
+
+    purge)
+        # Disable the service
+        if command -v systemctl > /dev/null 2>&1; then
+            systemctl disable tamandua-agent.service 2>/dev/null || true
+            systemctl daemon-reload
+        fi
+
+        # Remove all directories
+        rm -rf "$CONFIG_DIR"
+        rm -rf "$DATA_DIR"
+        rm -rf "$LOG_DIR"
+        rm -rf "$RUN_DIR"
+
+        # Remove user and group
+        if getent passwd "$TAMANDUA_USER" > /dev/null 2>&1; then
+            userdel "$TAMANDUA_USER" 2>/dev/null || true
+        fi
+
+        if getent group "$TAMANDUA_GROUP" > /dev/null 2>&1; then
+            groupdel "$TAMANDUA_GROUP" 2>/dev/null || true
+        fi
+
+        echo "Tamandua agent completely removed."
+        ;;
+
+    upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        ;;
+
+    *)
+        echo "postrm called with unknown argument '$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

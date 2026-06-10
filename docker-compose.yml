@@ -1,0 +1,158 @@
+# Tamandua EDR Agent - Docker Compose for Development and Testing
+#
+# Usage:
+#   docker-compose up -d tamandua-agent        # Non-privileged agent
+#   docker-compose up -d tamandua-agent-ebpf   # eBPF-enabled agent (privileged)
+#   docker-compose logs -f tamandua-agent      # View logs
+#   docker-compose down                         # Stop all
+#
+# Note: The eBPF variant requires a Linux host with kernel 5.8+ for full
+# capability support. On older kernels, CAP_SYS_ADMIN provides fallback.
+
+version: "3.8"
+
+services:
+  # ==========================================================================
+  # Non-privileged Agent
+  # Standard agent without eBPF support. Suitable for basic telemetry
+  # collection where kernel-level tracing is not required.
+  # ==========================================================================
+  tamandua-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        RUST_VERSION: "1.77"
+        FEATURES: "compression,performance,no-ebpf"
+    image: tamandua-agent:dev
+    container_name: tamandua-agent-dev
+    hostname: tamandua-agent-container
+    environment:
+      - TAMANDUA_SERVER_URL=wss://server:4000/socket/agent
+      - TAMANDUA_AGENT_ID=container-test-01
+      - TAMANDUA_CONFIG_DIR=/etc/tamandua
+      - TAMANDUA_DATA_DIR=/var/lib/tamandua
+      - RUST_LOG=info,tamandua_agent=debug
+    volumes:
+      - ./config:/etc/tamandua:ro
+      - tamandua-data:/var/lib/tamandua
+    ports:
+      - "9100:9100"
+    networks:
+      - tamandua-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9100/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # eBPF-enabled Agent (Privileged)
+  # Full telemetry collection with eBPF support. Requires privileged mode
+  # and specific capabilities for kernel-level tracing.
+  #
+  # WARNING: This container runs with elevated privileges. Use only in
+  # trusted environments or for development/testing.
+  # ==========================================================================
+  tamandua-agent-ebpf:
+    build:
+      context: .
+      dockerfile: Dockerfile.ebpf
+      args:
+        RUST_VERSION: "1.77"
+        FEATURES: "compression,performance,ebpf"
+    image: tamandua-agent:ebpf-dev
+    container_name: tamandua-agent-ebpf-dev
+    hostname: tamandua-agent-ebpf-container
+
+    # eBPF requires privileged mode for full kernel access
+    privileged: true
+
+    # Host PID namespace for process monitoring across the host
+    pid: host
+
+    # Host network mode for network tracing
+    network_mode: host
+
+    environment:
+      - TAMANDUA_SERVER_URL=wss://localhost:4000/socket/agent
+      - TAMANDUA_AGENT_ID=container-ebpf-01
+      - TAMANDUA_CONFIG_DIR=/etc/tamandua
+      - TAMANDUA_DATA_DIR=/var/lib/tamandua
+      - TAMANDUA_EBPF_DIR=/usr/share/tamandua/ebpf
+      - TAMANDUA_EBPF_ENABLED=true
+      - RUST_LOG=info,tamandua_agent=debug
+      # Host /proc mount location for container-aware process scanning
+      - HOST_PROC=/host/proc
+
+    volumes:
+      # Configuration (read-only)
+      - ./config:/etc/tamandua:ro
+      # Data persistence
+      - tamandua-data-ebpf:/var/lib/tamandua
+      # Kernel debug filesystem for tracing (read-only)
+      - /sys/kernel/debug:/sys/kernel/debug:ro
+      # BPF filesystem for pinned maps and programs (read-write)
+      - /sys/fs/bpf:/sys/fs/bpf:rw
+      # Host procfs for process information (read-only)
+      - /proc:/host/proc:ro
+      # Boot config for BTF (if available)
+      - /boot:/boot:ro
+      # Kernel modules for BTF discovery
+      - /lib/modules:/lib/modules:ro
+
+    # Required capabilities for eBPF operations
+    cap_add:
+      - BPF           # eBPF operations (kernel 5.8+)
+      - SYS_ADMIN     # Fallback for older kernels, mount operations
+      - NET_ADMIN     # Network tracing, tc programs
+      - PERFMON       # Perf events, kprobes, uprobes
+      - SYS_PTRACE    # Process tracing, ptrace operations
+      - SYS_RESOURCE  # Increase memlock limit for eBPF maps
+
+    # Security options for full eBPF access
+    security_opt:
+      - apparmor:unconfined
+      - seccomp:unconfined
+
+    # Increase memlock limit for eBPF maps
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  # Standard agent data persistence
+  tamandua-data:
+    driver: local
+
+  # eBPF agent data persistence (separate to avoid conflicts)
+  tamandua-data-ebpf:
+    driver: local
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  tamandua-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

@@ -1,0 +1,41 @@
+[package]
+name = "tamandua-ebpf"
+version = "0.1.0"
+edition = "2021"
+description = "Tamandua EDR eBPF programs for kernel-level monitoring"
+license = "Apache-2.0"
+
+[dependencies]
+# eBPF-specific crates (run in kernel space)
+aya-ebpf = "0.1"
+aya-log-ebpf = "0.1"
+
+# Shared types with userspace
+tamandua-ebpf-common = { path = "../ebpf-common" }
+
+[[bin]]
+name = "tamandua-ebpf"
+path = "src/main.rs"
+
+[profile.dev]
+opt-level = 3
+debug = false
+debug-assertions = false
+overflow-checks = false
+lto = true
+panic = "abort"
+incremental = false
+codegen-units = 1
+rpath = false
+
+[profile.release]
+opt-level = 3
+debug = false
+debug-assertions = false
+overflow-checks = false
+lto = true
+panic = "abort"
+codegen-units = 1
+
+[workspace]
+members = ["llm-uprobe"]

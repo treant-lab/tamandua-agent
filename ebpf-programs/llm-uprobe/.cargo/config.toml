@@ -1,0 +1,5 @@
+# Override eBPF target for structure tests
+# Actual eBPF compilation requires bpf-linker and bpfel-unknown-none target
+
+[build]
+# Use host target for tests (structure validation doesn't need eBPF compilation)

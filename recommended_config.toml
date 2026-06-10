@@ -1,0 +1,25 @@
+﻿# Tamandua Agent - Stable Configuration
+# Generated: 2026-01-29 13:08:11
+# Only collectors that passed stability test
+
+server_url = "ws://localhost:4000/socket/agent"
+agent_id = "550e8400-e29b-41d4-a716-446655440001"
+batch_size = 100
+batch_timeout_seconds = 5
+
+[collectors]
+process_enabled = false
+dns_enabled = false
+network_enabled = false
+firmware_enabled = false
+memory_enabled = false
+registry_enabled = false
+
+# Other collectors disabled by default for stability
+file_enabled = false
+injection_enabled = false
+etw_enabled = false
+amsi_enabled = false
+lsass_enabled = false
+wmi_enabled = false
+clr_enabled = false

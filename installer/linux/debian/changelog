@@ -1,0 +1,6 @@
+tamandua-agent (${VERSION}) stable; urgency=medium
+
+  * Release ${VERSION}
+  * See https://github.com/tamandua/tamandua/releases for full changelog
+
+ -- Tamandua Security <contato@treantlab.org>  ${DATE}

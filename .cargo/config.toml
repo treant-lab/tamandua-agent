@@ -1,0 +1,128 @@
+# .cargo/config.toml - Cargo configuration for Tamandua Agent
+#
+# This file configures:
+# - Cross-compilation linker settings for ARM targets
+# - macOS framework linking
+# - Platform-specific build flags
+#
+# Note: When using cross-rs, the linkers are provided by the Docker containers.
+# These settings are for native cross-compilation without cross-rs.
+
+# ============================================================================
+# macOS Targets
+# ============================================================================
+
+# Apple Silicon (M1/M2/M3/M4) - Native ARM64
+[target.aarch64-apple-darwin]
+# Link macOS Security framework for code signing verification
+rustflags = [
+    "-C", "link-arg=-framework", "-C", "link-arg=Security",
+    "-C", "link-arg=-framework", "-C", "link-arg=CoreFoundation",
+]
+
+# Intel Mac - x86_64
+[target.x86_64-apple-darwin]
+rustflags = [
+    "-C", "link-arg=-framework", "-C", "link-arg=Security",
+    "-C", "link-arg=-framework", "-C", "link-arg=CoreFoundation",
+]
+
+# ============================================================================
+# Linux ARM64 Targets (for native cross-compilation)
+# ============================================================================
+
+# AWS Graviton, Ampere, generic ARM64 Linux
+# Use aarch64-linux-gnu-gcc toolchain
+[target.aarch64-unknown-linux-gnu]
+linker = "aarch64-linux-gnu-gcc"
+# Statically link OpenSSL for portability
+# rustflags = ["-C", "target-feature=+crt-static"]
+
+# ARM64 musl (static binaries for containers)
+[target.aarch64-unknown-linux-musl]
+linker = "aarch64-linux-musl-gcc"
+# musl builds are statically linked by default
+rustflags = ["-C", "target-feature=+crt-static"]
+
+# ============================================================================
+# Linux ARM32 Targets (Raspberry Pi)
+# ============================================================================
+
+# ARMv7 (Raspberry Pi 2/3/4 in 32-bit mode)
+[target.armv7-unknown-linux-gnueabihf]
+linker = "arm-linux-gnueabihf-gcc"
+
+# ARMv6 (Raspberry Pi Zero/1)
+[target.armv6-unknown-linux-gnueabihf]
+linker = "arm-linux-gnueabihf-gcc"
+
+# ARMv7 musl (static)
+[target.armv7-unknown-linux-musleabihf]
+linker = "armv7-linux-musleabihf-gcc"
+rustflags = ["-C", "target-feature=+crt-static"]
+
+# ============================================================================
+# Windows Targets
+# ============================================================================
+
+# Windows x64 MSVC - No special config needed
+[target.x86_64-pc-windows-msvc]
+
+# Windows ARM64 MSVC - For Surface Pro X, Windows Dev Kit 2023
+[target.aarch64-pc-windows-msvc]
+
+# ============================================================================
+# Linux x86_64 Targets
+# ============================================================================
+
+# Standard Linux x64
+[target.x86_64-unknown-linux-gnu]
+# Use native gcc
+
+# Static musl build (for Docker scratch images)
+[target.x86_64-unknown-linux-musl]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+# ============================================================================
+# Build Configuration
+# ============================================================================
+
+[build]
+# Incremental compilation for faster development builds
+# Disable for release builds to ensure reproducibility
+# incremental = true
+
+# Number of parallel jobs (comment out to use default based on CPU cores)
+# jobs = 8
+
+# ============================================================================
+# Environment Variables
+# ============================================================================
+
+[env]
+# Disable debuginfo in release builds for smaller binaries
+# CARGO_PROFILE_RELEASE_DEBUG = "false"
+
+# ============================================================================
+# Aliases
+# ============================================================================
+
+[alias]
+# Build optimized release with symbols stripped
+build-release = "build --release"
+# Build for all ARM targets
+build-arm = ["build", "--release", "--target", "aarch64-unknown-linux-gnu"]
+
+# ============================================================================
+# Profile Overrides for ARM Targets
+# ============================================================================
+#
+# ARM targets benefit from size optimization:
+#
+# [profile.release]
+# opt-level = "s"  # Optimize for size
+# lto = "thin"     # Fast link-time optimization
+# strip = true     # Strip debug symbols
+# panic = "abort"  # Smaller panic handling
+#
+# These are configured in Cargo.toml for the release profile.

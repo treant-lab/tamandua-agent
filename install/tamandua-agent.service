@@ -1,0 +1,50 @@
+[Unit]
+Description=Tamandua EDR Agent Service
+Documentation=https://docs.treantlab.org
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=notify
+ExecStart=/opt/tamandua/bin/tamandua-agent service
+Restart=always
+RestartSec=5
+User=root
+
+# Security hardening
+# Grant only the capabilities needed for EDR functionality
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_NET_RAW CAP_SYS_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_NET_RAW CAP_SYS_ADMIN
+
+# File system protection
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+NoNewPrivileges=false
+
+# Allow writes to Tamandua directories
+ReadWritePaths=/var/lib/tamandua /var/run/tamandua /var/log/tamandua
+
+# Watchdog configuration
+# Service must notify systemd every 30 seconds or it will be restarted
+WatchdogSec=30s
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+LimitMEMLOCK=infinity
+
+# Environment
+Environment="RUST_LOG=info"
+Environment="TAMANDUA_CONFIG=/etc/tamandua/agent.toml"
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tamandua-agent
+
+[Install]
+WantedBy=multi-user.target
+Alias=tamandua.service

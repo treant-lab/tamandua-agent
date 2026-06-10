@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Tamandua EDR Agent - WiX Configuration Variables
+
+    This file defines variables used throughout the installer.
+    Override these via command line: wix build -d Version=1.2.3
+-->
+<Include xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+    <!-- Product Information -->
+    <?ifndef Version ?>
+        <?define Version = "0.1.0" ?>
+    <?endif?>
+
+    <?ifndef ProductName ?>
+        <?define ProductName = "Tamandua EDR Agent" ?>
+    <?endif?>
+
+    <?ifndef Manufacturer ?>
+        <?define Manufacturer = "Tamandua Security" ?>
+    <?endif?>
+
+    <!-- GUIDs - IMPORTANT: Generate new GUIDs for production -->
+    <!-- UpgradeCode MUST remain constant across all versions for upgrades to work -->
+    <?define UpgradeCode = "E8B5F4C1-2D3A-4B5C-9E6F-7A8B9C0D1E2F" ?>
+
+    <!-- Paths -->
+    <?ifndef AgentPath ?>
+        <?define AgentPath = "..\..\target\release" ?>
+    <?endif?>
+
+    <?ifndef ConfigPath ?>
+        <?define ConfigPath = "..\..\config" ?>
+    <?endif?>
+
+    <!-- Default Configuration -->
+    <?ifndef DefaultServerUrl ?>
+        <?define DefaultServerUrl = "wss://agents.tamandua.treantlab.org:8443/socket/agent" ?>
+    <?endif?>
+
+    <!-- Service Configuration -->
+    <?define ServiceName = "TamanduaAgent" ?>
+    <?define ServiceDisplayName = "Tamandua EDR Agent" ?>
+    <?define ServiceDescription = "Tamandua Endpoint Detection and Response Agent - Protects your system against advanced threats" ?>
+
+    <!-- Installation Directories -->
+    <?define InstallDirName = "Tamandua" ?>
+    <?define ProgramDataDir = "Tamandua" ?>
+
+    <!-- File Names -->
+    <?define AgentExeName = "tamandua-agent.exe" ?>
+    <?define ConfigFileName = "agent.toml" ?>
+
+    <!-- Event Log -->
+    <?define EventLogSource = "TamanduaAgent" ?>
+    <?define EventLogName = "Application" ?>
+
+</Include>

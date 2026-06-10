@@ -1,0 +1,426 @@
+# Execution Detection Rules
+# MITRE ATT&CK Tactic: TA0002 - Execution
+
+version: "1.0"
+metadata:
+  author: Tamandua Security Team
+  description: Detection rules for suspicious execution techniques
+  last_updated: "2024-01-15"
+
+rules:
+  # ==========================================================================
+  # PowerShell Abuse
+  # ==========================================================================
+
+  - id: EXEC-001
+    name: Encoded PowerShell Execution
+    description: Detects Base64-encoded PowerShell commands
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [execution, defense-evasion]
+      techniques: [T1059.001, T1027]
+    conditions:
+      all:
+        - process.name:
+            contains: powershell
+        - process.cmdline:
+            contains: ["-enc", "-encodedcommand", "-e "]
+    response:
+      - alert
+      - collect_evidence
+    tags: [powershell, encoded, obfuscation]
+    false_positives:
+      - Legitimate automation scripts
+      - SCCM/Intune deployments
+    confidence: 0.75
+
+  - id: EXEC-002
+    name: PowerShell Execution Policy Bypass
+    description: Detects attempts to bypass PowerShell execution policy
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [execution, defense-evasion]
+      techniques: [T1059.001]
+    conditions:
+      all:
+        - process.name:
+            contains: powershell
+        - process.cmdline:
+            regex: (?i)-(?:ep|executionpolicy)\s+bypass
+    response:
+      - alert
+    tags: [powershell, policy-bypass]
+    false_positives:
+      - Legitimate IT automation
+    confidence: 0.70
+
+  - id: EXEC-003
+    name: PowerShell Download Cradle
+    description: Detects PowerShell commands downloading and executing code
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [execution]
+      techniques: [T1059.001, T1105]
+    conditions:
+      all:
+        - process.name:
+            contains: powershell
+        - process.cmdline:
+            contains: [DownloadString, DownloadFile, Invoke-WebRequest, Start-BitsTransfer, WebClient, IEX, Invoke-Expression]
+    response:
+      - alert
+      - collect_evidence
+    tags: [powershell, download-cradle]
+    confidence: 0.85
+
+  - id: EXEC-004
+    name: PowerShell Hidden Window
+    description: Detects PowerShell running with hidden window
+    category: process
+    severity: medium
+    enabled: true
+    mitre:
+      tactics: [execution, defense-evasion]
+      techniques: [T1059.001, T1564.003]
+    conditions:
+      all:
+        - process.name:
+            contains: powershell
+        - process.cmdline:
+            regex: (?i)-(?:w(?:indowstyle)?)\s+hidden
+    response:
+      - alert
+    tags: [powershell, hidden]
+    false_positives:
+      - Scheduled tasks
+      - Background services
+    confidence: 0.65
+
+  # ==========================================================================
+  # WMI Execution
+  # ==========================================================================
+
+  - id: EXEC-005
+    name: WMIC Process Creation
+    description: Detects WMI-based process execution
+    category: process
+    severity: medium
+    enabled: true
+    mitre:
+      tactics: [execution]
+      techniques: [T1047]
+    conditions:
+      all:
+        - process.name:
+            ends_with: wmic.exe
+        - process.cmdline:
+            contains: [process, call, create]
+    response:
+      - alert
+    tags: [wmic, remote-exec]
+    false_positives:
+      - Legitimate administrative tools
+    confidence: 0.70
+
+  - id: EXEC-006
+    name: WMI Remote Execution
+    description: Detects WMI executing commands on remote systems
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [execution, lateral-movement]
+      techniques: [T1047, T1021.006]
+    conditions:
+      all:
+        - process.name:
+            ends_with: wmic.exe
+        - process.cmdline:
+            contains: [/node:, process, call, create]
+    response:
+      - alert
+      - notify_soc
+    tags: [wmic, remote-exec, lateral-movement]
+    confidence: 0.85
+
+  # ==========================================================================
+  # Script Interpreters
+  # ==========================================================================
+
+  - id: EXEC-007
+    name: WScript/CScript Execution from Temp
+    description: Detects script execution from temporary directories
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [execution]
+      techniques: [T1059.005, T1059.007]
+    conditions:
+      all:
+        - process.name:
+            contains: [wscript, cscript]
+        - process.cmdline:
+            regex: (?i)(temp|tmp|appdata\\local\\temp)
+    response:
+      - alert
+      - kill_process
+    tags: [vbscript, jscript, temp-execution]
+    confidence: 0.80
+
+  - id: EXEC-008
+    name: MSHTA Execution
+    description: Detects MSHTA executing HTA files
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [execution, defense-evasion]
+      techniques: [T1218.005]
+    conditions:
+      any:
+        - process.name:
+            ends_with: mshta.exe
+        - process.cmdline:
+            contains: [mshta, ".hta", "javascript:", "vbscript:"]
+    response:
+      - alert
+      - kill_process
+    tags: [mshta, hta, lolbas]
+    confidence: 0.85
+
+  # ==========================================================================
+  # Office Macro Execution
+  # ==========================================================================
+
+  - id: EXEC-009
+    name: Office Application Spawning Shell
+    description: Detects Office applications spawning command shells
+    category: process
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [execution]
+      techniques: [T1204.002, T1059]
+    conditions:
+      all:
+        - process.parent_name:
+            contains: [winword, excel, powerpnt, outlook, msaccess, visio]
+        - process.name:
+            contains: [cmd.exe, powershell, pwsh, wscript, cscript, mshta]
+    response:
+      - alert
+      - kill_process
+      - quarantine_file
+    tags: [office-macro, malicious-document]
+    confidence: 0.90
+
+  - id: EXEC-010
+    name: Office Spawning Rundll32
+    description: Detects Office applications executing rundll32
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [execution, defense-evasion]
+      techniques: [T1204.002, T1218.011]
+    conditions:
+      all:
+        - process.parent_name:
+            contains: [winword, excel, powerpnt]
+        - process.name:
+            ends_with: rundll32.exe
+    response:
+      - alert
+    tags: [office-macro, rundll32]
+    confidence: 0.85
+
+  # ==========================================================================
+  # Scheduled Task Abuse
+  # ==========================================================================
+
+  - id: EXEC-011
+    name: Scheduled Task Creation via Command Line
+    description: Detects scheduled task creation for persistence/execution
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [execution, persistence]
+      techniques: [T1053.005]
+    conditions:
+      all:
+        - process.name:
+            ends_with: schtasks.exe
+        - process.cmdline:
+            contains: /create
+    response:
+      - alert
+    tags: [scheduled-task, persistence]
+    false_positives:
+      - Legitimate software installation
+    confidence: 0.70
+
+  - id: EXEC-012
+    name: AT Command Execution
+    description: Detects use of deprecated AT command for scheduling
+    category: process
+    severity: medium
+    enabled: true
+    mitre:
+      tactics: [execution, persistence]
+      techniques: [T1053.002]
+    conditions:
+      all:
+        - process.name:
+            ends_with: at.exe
+    response:
+      - alert
+    tags: [at-command, scheduling]
+    confidence: 0.75
+
+  # ==========================================================================
+  # Service Execution
+  # ==========================================================================
+
+  - id: EXEC-013
+    name: SC Service Creation
+    description: Detects new service creation which may indicate persistence
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [execution, persistence]
+      techniques: [T1543.003]
+    conditions:
+      all:
+        - process.name:
+            ends_with: sc.exe
+        - process.cmdline:
+            contains: [create, binpath=]
+    response:
+      - alert
+    tags: [service-creation, persistence]
+    false_positives:
+      - Legitimate software installation
+    confidence: 0.75
+
+  # ==========================================================================
+  # C2 Framework Indicators
+  # ==========================================================================
+
+  - id: EXEC-014
+    name: Cobalt Strike Beacon
+    description: Detects Cobalt Strike beacon indicators
+    category: process
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [execution, command-and-control]
+      techniques: [T1071.001]
+    conditions:
+      any:
+        - process.name:
+            regex: (?i)(?:beacon|cobalt)
+        - process.cmdline:
+            contains: [cobaltstrike, beacon.dll, "pipe\\msagent", "pipe\\status"]
+    response:
+      - alert
+      - kill_process
+      - isolate_host
+      - notify_soc
+    tags: [cobalt-strike, c2, apt]
+    confidence: 0.95
+
+  - id: EXEC-015
+    name: Metasploit Payload Indicators
+    description: Detects Metasploit/Meterpreter execution
+    category: process
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [execution]
+      techniques: [T1059]
+    conditions:
+      any:
+        - process.name:
+            contains: [meterpreter, msfvenom]
+        - process.cmdline:
+            contains: [meterpreter, msfconsole, exploit/multi/handler]
+    response:
+      - alert
+      - kill_process
+      - isolate_host
+    tags: [metasploit, meterpreter, c2]
+    confidence: 0.95
+
+  - id: EXEC-016
+    name: Sliver C2 Implant
+    description: Detects Sliver C2 framework implants
+    category: process
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [execution, command-and-control]
+      techniques: [T1071.001, T1095]
+    conditions:
+      any:
+        - process.name:
+            contains: sliver
+        - process.cmdline:
+            contains: [sliver-client, implant, beacon]
+    response:
+      - alert
+      - kill_process
+      - isolate_host
+    tags: [sliver, c2]
+    confidence: 0.95
+
+  - id: EXEC-017
+    name: Empire/Starkiller Agent
+    description: Detects PowerShell Empire C2 agents
+    category: process
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [execution, command-and-control]
+      techniques: [T1059.001, T1071.001]
+    conditions:
+      any:
+        - process.name:
+            contains: [empire, starkiller]
+        - process.cmdline:
+            contains: [empire.db, listeners, stagers, agent]
+    response:
+      - alert
+      - kill_process
+    tags: [empire, c2]
+    confidence: 0.90
+
+  - id: EXEC-018
+    name: Brute Ratel C4 Implant
+    description: Detects Brute Ratel C4 framework
+    category: process
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [execution, command-and-control]
+      techniques: [T1071.001]
+    conditions:
+      any:
+        - process.name:
+            contains: [bruteratel, badger]
+        - process.cmdline:
+            contains: [bruteratel, brc4, badger.exe]
+    response:
+      - alert
+      - kill_process
+      - isolate_host
+    tags: [brute-ratel, c2]
+    confidence: 0.95

@@ -1,0 +1,52 @@
+[
+  {
+    "type": "domain",
+    "value": "malware-c2.evil.com",
+    "source": "internal",
+    "confidence": 0.95,
+    "severity": "critical",
+    "description": "Known C2 domain",
+    "tags": ["c2", "malware"],
+    "mitre_techniques": ["T1071.001"]
+  },
+  {
+    "type": "sha256",
+    "value": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "source": "internal",
+    "confidence": 0.99,
+    "severity": "critical",
+    "description": "Known malware hash (empty file - placeholder)",
+    "tags": ["malware"],
+    "mitre_techniques": ["T1059"]
+  },
+  {
+    "type": "ipv4",
+    "value": "185.220.101.1",
+    "source": "tor-exit-nodes",
+    "confidence": 0.70,
+    "severity": "medium",
+    "description": "Tor exit node",
+    "tags": ["tor", "anonymization"],
+    "mitre_techniques": ["T1090.003"]
+  },
+  {
+    "type": "domain",
+    "value": "*.top",
+    "source": "suspicious-tld",
+    "confidence": 0.40,
+    "severity": "low",
+    "description": "Suspicious TLD commonly used by malware",
+    "tags": ["suspicious-tld"],
+    "mitre_techniques": []
+  },
+  {
+    "type": "domain",
+    "value": "pastebin.com",
+    "source": "paste-sites",
+    "confidence": 0.30,
+    "severity": "low",
+    "description": "Paste site - often used for malware staging",
+    "tags": ["paste-site", "staging"],
+    "mitre_techniques": ["T1102"]
+  }
+]

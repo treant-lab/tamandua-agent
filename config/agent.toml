@@ -1,0 +1,364 @@
+# Tamandua Agent Configuration
+# =================================
+
+# Unique agent identifier (must be a valid UUID)
+agent_id = "550e8400-e29b-41d4-a716-446655440001"
+
+# Backend server URL (WebSocket endpoint)
+# Official builds default to the Tamandua public mTLS-backed agent channel.
+# Override this for self-hosted deployments.
+server_url = "wss://agents.tamandua.treantlab.org:8443/socket/agent"
+
+# Authentication token for backend communication
+auth_token = "dev-token-123"
+
+# Heartbeat interval in seconds
+heartbeat_interval_seconds = 30
+
+# Telemetry batching configuration
+batch_size = 100
+batch_timeout_seconds = 5
+
+# Reconnection settings
+reconnect_delay_seconds = 5
+max_reconnect_attempts = 0  # 0 = infinite
+
+# Connection timeout in seconds
+connection_timeout_seconds = 30
+
+# Enable YARA scanning
+yara_enabled = false
+
+# Enable entropy-based packed/encrypted file detection
+entropy_check_enabled = true
+entropy_threshold = 7.2
+
+# Paths to exclude from monitoring
+excluded_paths = [
+    "/proc",
+    "/sys",
+    "/dev",
+    "C:\\Windows\\WinSxS",
+    "C:\\Windows\\Installer",
+]
+
+# Processes to exclude from monitoring
+excluded_processes = [
+    "System Idle Process",
+    "System",
+    "svchost.exe",
+    "explorer.exe",
+]
+
+# File patterns to monitor
+monitored_file_patterns = [
+    "*.exe",
+    "*.dll",
+    "*.ps1",
+    "*.bat",
+    "*.cmd",
+    "*.vbs",
+    "*.js",
+    "*.hta",
+    "*.scr",
+]
+
+# Honeyfile monitoring
+honeyfiles_enabled = false
+honeyfile_paths = []
+
+# Transport configuration (failover and certificate pinning)
+[transport]
+backup_servers = ["wss://backup1.example.com/socket/agent", "wss://backup2.example.com/socket/agent"]
+cert_pins = ["sha256//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="]
+
+# TLS configuration
+[tls]
+enabled = false
+skip_verify = true
+
+# Collector configuration
+[collectors]
+# Core collectors
+process_enabled = true
+file_enabled = true
+network_enabled = true
+dns_enabled = true
+
+# Advanced detection collectors
+injection_enabled = true
+named_pipes_enabled = true
+usb_enabled = true
+ransomware_canary_enabled = true
+driver_blocklist_enabled = true
+memory_enabled = true
+network_dpi_enabled = true
+network_anomaly_enabled = true
+cloud_enabled = true
+exploit_mitigation_enabled = true
+defense_evasion_enabled = true
+persistence_enabled = true
+script_inspector_enabled = true
+credential_theft_enabled = true
+lateral_movement_enabled = true
+container_enabled = true
+process_hollowing_enabled = true
+scheduled_tasks_enabled = true
+firmware_enabled = true
+clipboard_enabled = true
+browser_protection_enabled = true
+input_capture_enabled = true
+office_email_enabled = true
+ad_monitor_enabled = true
+health_enabled = true
+syscall_evasion_enabled = true
+
+# Windows-specific collectors (ignored on other platforms)
+registry_enabled = true
+etw_enabled = true
+amsi_enabled = true
+lsass_enabled = true
+wmi_enabled = true
+clr_enabled = true  # CLR/.NET runtime monitoring (Assembly.Load, reflection, JIT)
+
+# Linux-specific collectors (ignored on other platforms)
+ebpf_enabled = false
+
+# ==================================================================
+# ETW Collector Configuration (Windows-only)
+# ==================================================================
+# Fine-grained control over the Event Tracing for Windows collector.
+# Includes session resilience, tamper detection, and per-provider tuning.
+[collectors.etw]
+enabled = true
+session_name = "TamanduaEDR"
+
+# Ring buffer capacity (number of events). When the buffer is full,
+# the oldest event is evicted and the drop counter is incremented.
+ring_buffer_size = 100000
+
+# Enable ETW tamper detection:
+# - Periodic verification that our ETW trace session is still running
+# - EtwEventWrite prologue byte comparison to detect NOP patching
+# - Critical alerts emitted on detection (MITRE T1562.006)
+tamper_detection = true
+
+# How often (seconds) to run health checks (session query + tamper scan)
+health_check_interval_secs = 30
+
+# Maximum events per second per provider before auto-throttling kicks in.
+# Events exceeding this rate are silently dropped to protect CPU.
+provider_rate_limit = 10000
+
+# Per-provider enable/disable toggles.
+# Disable specific providers to reduce noise or CPU on certain endpoints.
+[collectors.etw.providers]
+kernel_process = true
+kernel_file = true
+kernel_network = true
+kernel_registry = true
+dns_client = true
+powershell = true
+amsi = true
+security_auditing = true
+sysmon = true
+threat_intelligence = true
+kernel_audit_api = true
+wmi_activity = true
+task_scheduler = true
+services = true
+code_integrity = true       # Detects unsigned/tampered driver loads (T1014, T1553)
+ldap_client = true          # Detects LDAP reconnaissance and credential access (T1087, T1018)
+
+# ==================================================================
+# Performance Profile
+# ==================================================================
+# Controls collector intervals and resource usage.
+# Options:
+#   "aggressive"  - Maximum detection. All collectors, tight intervals.
+#                   ~15-25% CPU. Best for high-value/sensitive assets.
+#   "balanced"    - Default. Good detection with reasonable resource
+#                   usage. ~5-10% CPU.
+#   "lightweight" - Minimal footprint. ~1-3% CPU. Disables heavy
+#                   collectors (memory forensics, process hollowing,
+#                   DPI, credential theft, etc.). Best for large
+#                   fleet or performance-sensitive systems.
+performance_profile = "balanced"
+
+# Maximum CPU percentage the agent should target.
+# Adaptive throttling will slow down collectors if this is exceeded.
+# Set to 0 to disable the cap.
+max_cpu_percent = 15.0
+
+# ==================================================================
+# Collector Tuning (overridden by performance_profile)
+# ==================================================================
+# These values are set automatically by the performance profile.
+# Only modify manually if you need fine-grained control beyond
+# what profiles offer.
+[collector_tuning]
+process_scan_interval_secs = 5
+memory_scan_interval_secs = 30
+dns_poll_interval_ms = 500
+network_poll_interval_ms = 1000
+registry_poll_interval_secs = 2
+adaptive_throttling_enabled = true
+cpu_throttle_threshold = 25.0
+
+# ==================================================================
+# Self-Update Configuration
+# ==================================================================
+# Controls automatic update checking, downloading, and installation.
+# Updates are verified with Ed25519 signatures and SHA-256 integrity
+# checks before installation. Supports atomic install with rollback
+# on crash detection.
+[updater]
+enabled = true
+
+# Interval between automatic binary update checks (hours)
+check_interval_hours = 6
+
+# Interval between automatic model/rule update checks (hours)
+# Models and rules change more frequently than the agent binary.
+model_update_interval_hours = 1
+
+# Whether model/rule updates (ONNX models, YARA, Sigma, IOCs) are enabled
+model_updates_enabled = true
+
+# Override URL for update API (leave empty to derive from server_url)
+# Example: "https://updates.treantlab.org/api/v1/updates"
+update_url = ""
+
+# Automatically restart the agent after installing an update
+auto_restart = true
+
+# Ed25519 public key for update manifest signature verification (base64).
+# Leave empty to use the compiled-in default key.
+# In production, set this to the release-signing public key.
+signing_public_key = ""
+
+# ==================================================================
+# Syscall Evasion Detection
+# ==================================================================
+# Controls the HookChain/SysWhispers/Hell's Gate evasion detector.
+# This collector detects EDR-bypass techniques including:
+# - IAT hooking and integrity violations
+# - Direct/indirect syscall stubs in non-ntdll memory
+# - Stack frame spoofing and ROP chain detection
+# - Suspicious syscall sequences (injection patterns)
+# - Heaven's Gate (WoW64 transition abuse)
+# - NTDLL integrity monitoring
+[syscall_evasion]
+enabled = true
+
+# Interval between IAT integrity checks (seconds)
+iat_check_interval_secs = 30
+
+# Interval between memory scans for syscall stubs (seconds)
+memory_scan_interval_secs = 60
+
+# Enable stack frame validation for suspicious processes
+stack_validation = true
+
+# Interval between NTDLL integrity checks (seconds)
+ntdll_check_interval_secs = 30
+
+# Enable ETW-based syscall sequence profiling
+etw_profiling = true
+
+# Enable Heaven's Gate (WoW64 transition abuse) detection
+heavens_gate_detection = true
+
+# Processes to always monitor at high frequency (case-insensitive)
+high_risk_processes = [
+    "powershell.exe",
+    "pwsh.exe",
+    "cmd.exe",
+    "wscript.exe",
+    "cscript.exe",
+    "mshta.exe",
+    "rundll32.exe",
+    "regsvr32.exe",
+    "msiexec.exe",
+    "certutil.exe",
+    "bitsadmin.exe",
+    "wmic.exe",
+    "msbuild.exe",
+    "installutil.exe",
+]
+
+# Anomaly score threshold for syscall sequence profiling (0.0-1.0)
+anomaly_threshold = 0.7
+
+# Learning period in seconds before behavioral baselining activates
+learning_period_secs = 300
+
+# ==================================================================
+# Offline Detection (Autonomous Local ML + YARA)
+# ==================================================================
+# When the backend ML service is unreachable the agent falls back to
+# local detection using an ONNX model (Malware-SMELL) and YARA rules.
+# Verdicts produced offline are queued and synchronized when the
+# connection is restored.
+[offline_detection]
+enabled = true
+
+# Requires an agent binary compiled with `onnx` for local ML inference.
+# Without `onnx`, the agent will not advertise ML-local capability. Without
+# both `onnx` and `yara`, offline detection is disabled at runtime.
+# Path to the local ONNX model file.
+# Defaults: Windows: C:\ProgramData\Tamandua\models\malware_smell.onnx
+#           Linux:   /var/lib/tamandua/models/malware_smell.onnx
+#           macOS:   /Library/Application Support/Tamandua/models/malware_smell.onnx
+# onnx_model_path = "models/malware_smell.onnx"
+
+# Directory containing .yar/.yara rule files for local scanning.
+# yara_rules_dir = "rules/yara/"
+
+# Maximum offline verdicts to queue before dropping the oldest.
+verdict_queue_max = 10000
+
+# How often (seconds) to check if the backend is reachable.
+backend_check_interval_secs = 30
+
+# ML confidence threshold for malicious classification (0.0-1.0).
+# Must match the canonical Malware-SMELL ONNX contract:
+# docs/apps/tamandua_ml/examples/ml_model_contract_malware_smell_onnx_v1.json
+ml_confidence_threshold = 0.7
+
+# Image size for the ONNX model input [1, 3, 64, 64] (must match training pipeline).
+onnx_image_size = 64
+
+# Maximum file size in bytes to submit for local scanning.
+# Files larger than this are skipped. Default: 100 MB.
+max_file_size = 104857600
+
+# ==================================================================
+# EDR Blinding Attack Detection
+# ==================================================================
+# Detects attacks targeting the EDR's visibility:
+# - ETW function patching (ntdll.dll!EtwEventWrite)
+# - AMSI memory patching (amsi.dll!AmsiScanBuffer)
+# - Event Log service tampering (thread-kill, .evtx deletion)
+# - Credential Guard bypass (WDigest downgrade, VBS disable)
+#
+# All detections are Windows-only (#[cfg(target_os = "windows")]).
+[edr_blinding]
+# ETW patching detection (MITRE T1562.006)
+etw_patching_enabled = true
+etw_check_interval_secs = 15
+
+# AMSI memory patching detection (MITRE T1562.001)
+amsi_patching_enabled = true
+amsi_check_interval_secs = 10
+amsi_cross_process_enabled = true
+
+# Event Log service integrity monitoring (MITRE T1070.001)
+event_log_integrity_enabled = true
+event_log_check_interval_secs = 10
+event_log_heartbeat_stale_secs = 300
+event_log_thread_drop_threshold = 3
+
+# Credential Guard bypass detection (MITRE T1003.001)
+credential_guard_enabled = true
+credential_guard_check_interval_secs = 10

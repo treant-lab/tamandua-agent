@@ -1,0 +1,397 @@
+# Defense Evasion Detection Rules
+# MITRE ATT&CK Tactic: TA0005 - Defense Evasion
+
+version: "1.0"
+metadata:
+  author: Tamandua Security Team
+  description: Detection rules for defense evasion techniques
+  last_updated: "2024-01-15"
+
+rules:
+  # ==========================================================================
+  # Process Masquerading
+  # ==========================================================================
+
+  - id: EVASION-001
+    name: Typosquatted System Process
+    description: Detects processes mimicking Windows system process names
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [defense-evasion]
+      techniques: [T1036.005]
+    conditions:
+      any:
+        - process.name:
+            regex: (?i)^(svch0st|lsas[^s]|csrs[^s]|svhost|scvhost|lssas|cssrs|expl0rer|rundl132)\.exe$
+    response:
+      - alert
+      - kill_process
+    tags: [masquerading, typosquatting]
+    confidence: 0.90
+
+  - id: EVASION-002
+    name: System Process in Wrong Location
+    description: Detects system processes running from non-standard locations
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [defense-evasion]
+      techniques: [T1036.005]
+    conditions:
+      all:
+        - process.name:
+            in: [svchost.exe, lsass.exe, csrss.exe, smss.exe, services.exe, wininit.exe]
+      none:
+        - process.path:
+            regex: (?i)^[a-z]:\\windows\\system32\\(svchost|lsass|csrss|smss|services|wininit)\.exe$
+    response:
+      - alert
+      - kill_process
+      - quarantine_file
+    tags: [masquerading, fake-system-process]
+    confidence: 0.95
+
+  - id: EVASION-003
+    name: Executable with Double Extension
+    description: Detects executables masquerading with double extensions
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [defense-evasion]
+      techniques: [T1036.007]
+    conditions:
+      any:
+        - process.name:
+            regex: \.(pdf|doc|docx|xls|xlsx|txt|jpg|png|gif)\.(exe|scr|bat|cmd|ps1|vbs|js)$
+    response:
+      - alert
+      - kill_process
+    tags: [double-extension, masquerading]
+    confidence: 0.90
+
+  # ==========================================================================
+  # LOLBins - Living Off the Land Binaries
+  # ==========================================================================
+
+  - id: EVASION-004
+    name: Certutil Download
+    description: Detects certutil being used to download files
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [defense-evasion, command-and-control]
+      techniques: [T1105, T1140]
+    conditions:
+      all:
+        - process.name:
+            ends_with: certutil.exe
+        - process.cmdline:
+            contains: [-urlcache, -split, -f, http]
+    response:
+      - alert
+      - kill_process
+    tags: [certutil, lolbas, download]
+    false_positives:
+      - Legitimate certificate operations
+    confidence: 0.85
+
+  - id: EVASION-005
+    name: BITSAdmin Download
+    description: Detects BITSAdmin being used to download files
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [defense-evasion, persistence]
+      techniques: [T1105, T1197]
+    conditions:
+      all:
+        - process.name:
+            ends_with: bitsadmin.exe
+        - process.cmdline:
+            contains: [/transfer, /download, http]
+    response:
+      - alert
+    tags: [bitsadmin, lolbas, download]
+    confidence: 0.80
+
+  - id: EVASION-006
+    name: Rundll32 Script Execution
+    description: Detects rundll32 executing scripts or unusual DLLs
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [defense-evasion]
+      techniques: [T1218.011]
+    conditions:
+      all:
+        - process.name:
+            ends_with: rundll32.exe
+        - process.cmdline:
+            contains: [javascript:, vbscript:, shell32.dll,ShellExec_RunDLL, url.dll,OpenURL]
+    response:
+      - alert
+      - kill_process
+    tags: [rundll32, lolbas, script-execution]
+    confidence: 0.85
+
+  - id: EVASION-007
+    name: Regsvr32 Script Execution (Squiblydoo)
+    description: Detects regsvr32 scrobj.dll abuse
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [defense-evasion]
+      techniques: [T1218.010]
+    conditions:
+      all:
+        - process.name:
+            ends_with: regsvr32.exe
+        - process.cmdline:
+            contains: [/s, /n, /u, /i:, scrobj.dll, http]
+    response:
+      - alert
+      - kill_process
+    tags: [regsvr32, squiblydoo, lolbas]
+    confidence: 0.90
+
+  - id: EVASION-008
+    name: MSBuild Code Execution
+    description: Detects MSBuild executing code from inline tasks
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [defense-evasion]
+      techniques: [T1127.001]
+    conditions:
+      all:
+        - process.name:
+            ends_with: msbuild.exe
+        - process.cmdline:
+            regex: (?i)(\.xml|\.proj|\.csproj)
+    response:
+      - alert
+    tags: [msbuild, lolbas, code-execution]
+    false_positives:
+      - Legitimate build operations
+    confidence: 0.70
+
+  - id: EVASION-009
+    name: CMSTP Bypass
+    description: Detects CMSTP used for code execution
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [defense-evasion]
+      techniques: [T1218.003]
+    conditions:
+      all:
+        - process.name:
+            ends_with: cmstp.exe
+        - process.cmdline:
+            contains: [/ni, /s, .inf]
+    response:
+      - alert
+      - kill_process
+    tags: [cmstp, lolbas, uac-bypass]
+    confidence: 0.85
+
+  - id: EVASION-010
+    name: InstallUtil Code Execution
+    description: Detects InstallUtil executing code
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [defense-evasion]
+      techniques: [T1218.004]
+    conditions:
+      all:
+        - process.name:
+            ends_with: installutil.exe
+        - process.cmdline:
+            contains: [/logfile=, /logtoconsole=false, /u]
+    response:
+      - alert
+    tags: [installutil, lolbas]
+    confidence: 0.80
+
+  # ==========================================================================
+  # Security Software Tampering
+  # ==========================================================================
+
+  - id: EVASION-011
+    name: Disable Windows Defender
+    description: Detects attempts to disable Windows Defender
+    category: process
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [defense-evasion]
+      techniques: [T1562.001]
+    conditions:
+      any:
+        - process.cmdline:
+            contains:
+              - Set-MpPreference -DisableRealtimeMonitoring
+              - DisableAntiSpyware
+              - "sc stop WinDefend"
+              - "sc config WinDefend start= disabled"
+              - DisableIOAVProtection
+              - DisableBehaviorMonitoring
+    response:
+      - alert
+      - notify_soc
+    tags: [defender-disable, security-tampering]
+    confidence: 0.95
+
+  - id: EVASION-012
+    name: Disable Windows Firewall
+    description: Detects attempts to disable Windows Firewall
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [defense-evasion]
+      techniques: [T1562.004]
+    conditions:
+      any:
+        - process.cmdline:
+            contains:
+              - netsh firewall set opmode disable
+              - netsh advfirewall set allprofiles state off
+              - "Set-NetFirewallProfile -Enabled False"
+    response:
+      - alert
+      - notify_soc
+    tags: [firewall-disable, security-tampering]
+    confidence: 0.90
+
+  - id: EVASION-013
+    name: Event Log Tampering
+    description: Detects attempts to clear or disable event logs
+    category: process
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [defense-evasion]
+      techniques: [T1070.001]
+    conditions:
+      any:
+        - process.cmdline:
+            contains:
+              - wevtutil cl
+              - Clear-EventLog
+              - "Remove-EventLog"
+              - "auditpol /clear"
+              - "wmic nteventlog delete"
+    response:
+      - alert
+      - notify_soc
+    tags: [log-tampering, anti-forensics]
+    confidence: 0.95
+
+  # ==========================================================================
+  # Process Injection Indicators
+  # ==========================================================================
+
+  - id: EVASION-014
+    name: Process Hollowing Tool
+    description: Detects tools commonly used for process hollowing
+    category: process
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [defense-evasion]
+      techniques: [T1055.012]
+    conditions:
+      any:
+        - process.name:
+            contains: [hollow, donut, shellcode, inject]
+        - process.cmdline:
+            contains: [NtUnmapViewOfSection, VirtualAllocEx, WriteProcessMemory, SetThreadContext]
+    response:
+      - alert
+      - kill_process
+    tags: [process-hollowing, injection]
+    confidence: 0.90
+
+  - id: EVASION-015
+    name: Common Injector Patterns
+    description: Detects common DLL injection patterns
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [defense-evasion]
+      techniques: [T1055.001]
+    conditions:
+      any:
+        - process.cmdline:
+            contains:
+              - LoadLibraryA
+              - CreateRemoteThread
+              - NtCreateThreadEx
+              - RtlCreateUserThread
+              - QueueUserAPC
+    response:
+      - alert
+    tags: [dll-injection, code-injection]
+    confidence: 0.80
+
+  # ==========================================================================
+  # Indicator Removal
+  # ==========================================================================
+
+  - id: EVASION-016
+    name: Timestomping Indicators
+    description: Detects file timestamp modification
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [defense-evasion]
+      techniques: [T1070.006]
+    conditions:
+      any:
+        - process.cmdline:
+            contains:
+              - SetFileTime
+              - "(Get-Item).LastWriteTime"
+              - touch --date
+              - timestomp
+    response:
+      - alert
+    tags: [timestomping, anti-forensics]
+    confidence: 0.85
+
+  - id: EVASION-017
+    name: SDelete Usage
+    description: Detects secure deletion tools
+    category: process
+    severity: medium
+    enabled: true
+    mitre:
+      tactics: [defense-evasion]
+      techniques: [T1070.004]
+    conditions:
+      any:
+        - process.name:
+            contains: [sdelete, cipher]
+        - process.cmdline:
+            contains: [sdelete, "cipher /w:", eraser]
+    response:
+      - alert
+    tags: [secure-delete, anti-forensics]
+    false_positives:
+      - Legitimate data destruction
+    confidence: 0.75

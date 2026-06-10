@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Tamandua EDR Agent - Windows Service Configuration
+
+    This fragment defines the Windows service installation and configuration.
+    The service runs as LocalSystem with automatic restart on failure.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+    <?include config.wxi ?>
+
+    <Fragment>
+        <ComponentGroup Id="ServiceComponents" Directory="INSTALLFOLDER">
+
+            <!-- Service Configuration Registry Keys -->
+            <Component Id="ServiceConfigRegistry" Guid="2B3C4D5E-6F78-9012-3456-789ABCDEF012" Win64="yes">
+                <RegistryKey Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\$(var.ServiceName)">
+
+                    <!-- Additional service parameters -->
+                    <RegistryValue Name="ImagePath"
+                                  Type="expandable"
+                                  Value="&quot;[INSTALLFOLDER]$(var.AgentExeName)&quot; --config &quot;[ProgramDataConfig]agent.toml&quot; service" />
+
+                    <!-- Service description (backup) -->
+                    <RegistryValue Name="Description"
+                                  Type="string"
+                                  Value="$(var.ServiceDescription)" />
+
+                </RegistryKey>
+
+                <!-- Service Parameters subkey for custom configuration -->
+                <RegistryKey Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\$(var.ServiceName)\Parameters">
+                    <RegistryValue Name="InstallPath" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+                    <RegistryValue Name="ConfigPath" Type="string" Value="[ProgramDataConfig]agent.toml" />
+                    <RegistryValue Name="LogPath" Type="string" Value="[CommonAppDataFolder]$(var.ProgramDataDir)\logs" />
+                    <RegistryValue Name="RulesPath" Type="string" Value="[CommonAppDataFolder]$(var.ProgramDataDir)\rules" />
+                    <RegistryValue Name="Version" Type="string" Value="$(var.Version)" />
+                </RegistryKey>
+
+                <!-- Failure Actions - Detailed configuration via registry -->
+                <RegistryKey Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\$(var.ServiceName)">
+                    <!-- FailureActions is a binary blob, but we set it via ServiceConfig above -->
+                    <!-- This is for reference/override if needed -->
+                </RegistryKey>
+            </Component>
+
+            <!-- Event Log Registration -->
+            <Component Id="EventLogComponent" Guid="3C4D5E6F-7890-1234-5678-9ABCDEF01234" Win64="yes">
+                <RegistryKey Root="HKLM"
+                            Key="SYSTEM\CurrentControlSet\Services\EventLog\$(var.EventLogName)\$(var.EventLogSource)">
+
+                    <!-- Event message file (use the agent executable) -->
+                    <RegistryValue Name="EventMessageFile"
+                                  Type="expandable"
+                                  Value="[INSTALLFOLDER]$(var.AgentExeName)"
+                                  KeyPath="yes" />
+
+                    <!-- Category message file -->
+                    <RegistryValue Name="CategoryMessageFile"
+                                  Type="expandable"
+                                  Value="[INSTALLFOLDER]$(var.AgentExeName)" />
+
+                    <!-- Supported event types (all) -->
+                    <RegistryValue Name="TypesSupported"
+                                  Type="integer"
+                                  Value="7" />
+
+                    <!-- Number of categories -->
+                    <RegistryValue Name="CategoryCount"
+                                  Type="integer"
+                                  Value="5" />
+
+                </RegistryKey>
+            </Component>
+
+            <!-- Service Hardening Configuration -->
+            <Component Id="ServiceHardening" Guid="4D5E6F78-9012-3456-789A-BCDEF0123456" Win64="yes">
+                <RegistryKey Root="HKLM"
+                            Key="SYSTEM\CurrentControlSet\Services\$(var.ServiceName)">
+
+                    <!-- Delayed Auto-Start (gives system time to fully initialize) -->
+                    <RegistryValue Name="DelayedAutostart"
+                                  Type="integer"
+                                  Value="1"
+                                  KeyPath="yes" />
+
+                    <!-- Pre-shutdown timeout (allow graceful shutdown) -->
+                    <RegistryValue Name="PreshutdownTimeout"
+                                  Type="integer"
+                                  Value="180000" />
+
+                </RegistryKey>
+
+                <!-- Service SID Type - Unrestricted (needed for network access) -->
+                <RegistryKey Root="HKLM"
+                            Key="SYSTEM\CurrentControlSet\Services\$(var.ServiceName)">
+                    <RegistryValue Name="ServiceSidType"
+                                  Type="integer"
+                                  Value="1" />
+                </RegistryKey>
+            </Component>
+
+            <!-- Tamper Protection - Protect service from being stopped -->
+            <Component Id="TamperProtection" Guid="5E6F7890-1234-5678-9ABC-DEF012345678" Win64="yes">
+                <RegistryKey Root="HKLM"
+                            Key="SOFTWARE\$(var.Manufacturer)\$(var.ProductName)">
+
+                    <!-- Mark as installed (for tamper detection) -->
+                    <RegistryValue Name="Installed"
+                                  Type="integer"
+                                  Value="1"
+                                  KeyPath="yes" />
+
+                    <RegistryValue Name="InstallDate"
+                                  Type="string"
+                                  Value="[Date]" />
+
+                    <RegistryValue Name="Version"
+                                  Type="string"
+                                  Value="$(var.Version)" />
+
+                    <RegistryValue Name="InstallPath"
+                                  Type="string"
+                                  Value="[INSTALLFOLDER]" />
+
+                </RegistryKey>
+
+                <!-- Protected process (requires driver) -->
+                <!-- This is a placeholder - actual protection requires kernel driver -->
+            </Component>
+
+        </ComponentGroup>
+    </Fragment>
+
+</Wix>

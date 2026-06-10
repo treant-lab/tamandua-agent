@@ -1,0 +1,191 @@
+# Tamandua EDR Agent - eBPF-enabled Docker Build
+# Privileged container with eBPF capabilities for full telemetry collection
+#
+# Build: docker build -f Dockerfile.ebpf -t tamandua-agent:ebpf .
+#
+# Run with required capabilities:
+#   docker run -d --name tamandua-agent-ebpf \
+#     --privileged \
+#     --pid=host \
+#     --cap-add=BPF \
+#     --cap-add=SYS_ADMIN \
+#     --cap-add=NET_ADMIN \
+#     --cap-add=PERFMON \
+#     --cap-add=SYS_PTRACE \
+#     -v /sys/kernel/debug:/sys/kernel/debug:ro \
+#     -v /sys/fs/bpf:/sys/fs/bpf:rw \
+#     -v /proc:/host/proc:ro \
+#     tamandua-agent:ebpf
+#
+# =============================================================================
+# Required capabilities for eBPF operations:
+#
+# --cap-add=BPF          eBPF operations (kernel 5.8+)
+# --cap-add=SYS_ADMIN    Fallback for older kernels, mount debugfs/bpffs
+# --cap-add=NET_ADMIN    Network tracing, socket operations
+# --cap-add=PERFMON      Perf events, kprobes, uprobes
+# --cap-add=SYS_PTRACE   Process tracing, reading /proc/<pid>/mem
+#
+# Required mounts:
+# /sys/kernel/debug      debugfs for tracing (read-only)
+# /sys/fs/bpf            bpffs for pinned maps and programs (read-write)
+# /proc                  procfs for process information (read-only)
+# =============================================================================
+
+# =============================================================================
+# Build Arguments
+# =============================================================================
+ARG RUST_VERSION=1.77
+ARG TARGET_ARCH=x86_64-unknown-linux-gnu
+ARG FEATURES=compression,performance,ebpf
+ARG BPF_CLANG=clang-16
+
+# =============================================================================
+# Stage 1: eBPF Builder
+# =============================================================================
+FROM rust:${RUST_VERSION}-bookworm AS builder
+
+ARG TARGET_ARCH
+ARG FEATURES
+ARG BPF_CLANG
+
+# Install build dependencies including eBPF toolchain
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    libssl-dev \
+    clang-16 \
+    llvm-16 \
+    libbpf-dev \
+    linux-headers-generic \
+    libelf-dev \
+    zlib1g-dev \
+    musl-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set eBPF build environment variables
+ENV BPF_CLANG=${BPF_CLANG}
+ENV BPF_CFLAGS="-O2 -g -Wall -Werror -D__TARGET_ARCH_x86"
+
+# Set up build environment
+WORKDIR /build
+
+# Copy dependency manifests first for better layer caching
+COPY Cargo.toml Cargo.lock ./
+
+# Copy xtask workspace member
+COPY xtask/ ./xtask/
+
+# Copy ebpf-common for shared types
+COPY ebpf-common/ ./ebpf-common/
+
+# Create dummy src for dependency caching
+RUN mkdir -p src && \
+    echo 'fn main() { println!("dummy"); }' > src/main.rs && \
+    echo 'pub fn lib_dummy() {}' > src/lib.rs
+
+# Build dependencies only (cached layer)
+RUN cargo build --release --features "${FEATURES}" 2>/dev/null || true
+
+# Remove dummy source
+RUN rm -rf src/
+
+# Copy actual source code
+COPY src/ ./src/
+COPY build.rs ./
+
+# Copy proto files if they exist
+COPY proto/ ./proto/ 2>/dev/null || true
+
+# Copy eBPF programs directory (built separately)
+COPY ebpf-programs/ ./ebpf-programs/ 2>/dev/null || true
+
+# Touch main.rs to force rebuild
+RUN touch src/main.rs
+
+# Build eBPF programs if directory exists and has content
+RUN if [ -d "ebpf-programs" ] && [ -f "ebpf-programs/Cargo.toml" ]; then \
+        cd ebpf-programs && \
+        cargo build --release 2>/dev/null || echo "eBPF programs build skipped"; \
+    fi
+
+# Build release binary with eBPF support
+RUN cargo build --release --features "${FEATURES}" \
+    --target ${TARGET_ARCH} 2>/dev/null || \
+    cargo build --release --features "${FEATURES}"
+
+# Strip the binary (preserving eBPF sections)
+RUN strip --strip-debug /build/target/release/tamandua-agent 2>/dev/null || \
+    strip --strip-debug /build/target/${TARGET_ARCH}/release/tamandua-agent 2>/dev/null || \
+    echo "Binary stripping skipped"
+
+# Copy binary to known location
+RUN cp /build/target/release/tamandua-agent /tamandua-agent 2>/dev/null || \
+    cp /build/target/${TARGET_ARCH}/release/tamandua-agent /tamandua-agent
+
+# Collect eBPF object files
+RUN mkdir -p /ebpf-objects && \
+    find /build -name "*.bpf.o" -exec cp {} /ebpf-objects/ \; 2>/dev/null || true && \
+    find /build -name "*_ebpf.o" -exec cp {} /ebpf-objects/ \; 2>/dev/null || true
+
+# =============================================================================
+# Stage 2: eBPF Runtime
+# =============================================================================
+FROM debian:bookworm-slim AS runtime
+
+# Install runtime dependencies including eBPF libraries
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl3 \
+    libbpf1 \
+    libelf1 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create required directories (NO non-root user - eBPF requires root or CAP_BPF)
+RUN mkdir -p /etc/tamandua /var/lib/tamandua /usr/share/tamandua/ebpf
+
+# Copy binary from builder
+COPY --from=builder /tamandua-agent /usr/local/bin/tamandua-agent
+
+# Copy pre-compiled eBPF object files
+COPY --from=builder /ebpf-objects/ /usr/share/tamandua/ebpf/
+
+# Copy entrypoint script
+COPY scripts/container-entrypoint.sh /usr/local/bin/container-entrypoint.sh
+RUN chmod 755 /usr/local/bin/container-entrypoint.sh
+
+# Set binary permissions
+RUN chmod 755 /usr/local/bin/tamandua-agent
+
+# Set environment variables
+ENV TAMANDUA_CONFIG_DIR=/etc/tamandua
+ENV TAMANDUA_DATA_DIR=/var/lib/tamandua
+ENV TAMANDUA_EBPF_DIR=/usr/share/tamandua/ebpf
+ENV TAMANDUA_EBPF_ENABLED=true
+ENV RUST_LOG=info,tamandua_agent=debug
+
+# Expose metrics port
+EXPOSE 9100
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:9100/health || exit 1
+
+# NOTE: eBPF container runs as root for kernel access
+# Security is provided by capability restrictions and read-only mounts
+
+# Set working directory
+WORKDIR /var/lib/tamandua
+
+# Labels
+LABEL org.opencontainers.image.source="https://github.com/treant-lab/tamandua-agent"
+LABEL org.opencontainers.image.description="Tamandua EDR Agent with eBPF support"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+LABEL org.opencontainers.image.vendor="Tamandua Security"
+LABEL org.opencontainers.image.title="Tamandua Agent (eBPF)"
+LABEL org.opencontainers.image.version="0.1.0"
+LABEL io.tamandua.ebpf="true"
+LABEL io.tamandua.capabilities="BPF,SYS_ADMIN,NET_ADMIN,PERFMON,SYS_PTRACE"
+
+# Use entrypoint script for runtime detection and validation
+ENTRYPOINT ["/usr/local/bin/container-entrypoint.sh"]

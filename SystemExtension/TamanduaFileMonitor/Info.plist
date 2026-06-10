@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Bundle Identification -->
+    <key>CFBundleIdentifier</key>
+    <string>com.tamandua.agent.sysext.filemonitor</string>
+    <key>CFBundleName</key>
+    <string>TamanduaFileMonitor</string>
+    <key>CFBundleDisplayName</key>
+    <string>Tamandua File Monitor</string>
+    <key>CFBundleVersion</key>
+    <string>1.0.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundlePackageType</key>
+    <string>SYSX</string>
+    <key>CFBundleExecutable</key>
+    <string>TamanduaFileMonitor</string>
+
+    <!-- Minimum macOS Version -->
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+
+    <!-- System Extension Configuration -->
+    <key>NSSystemExtensionUsageDescription</key>
+    <string>Tamandua EDR requires this system extension to monitor file system activity for threat detection and security protection. This extension runs in a sandboxed environment and monitors file operations to detect and prevent malicious activity.</string>
+
+    <!-- Extension Point -->
+    <key>NSExtension</key>
+    <dict>
+        <key>NSExtensionPointIdentifier</key>
+        <string>com.apple.system-extension.endpoint-security</string>
+        <key>NSExtensionPrincipalClass</key>
+        <string>TamanduaFileMonitor</string>
+    </dict>
+
+    <!-- EndpointSecurity Early Boot -->
+    <key>NSEndpointSecurityEarlyBoot</key>
+    <true/>
+
+    <!-- Required for ES client -->
+    <key>NSEndpointSecurityMachServiceName</key>
+    <string>com.tamandua.agent.filemonitor</string>
+
+    <!-- Required for code signing -->
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+
+    <!-- Supported Architectures -->
+    <key>CFBundleSupportedPlatforms</key>
+    <array>
+        <string>MacOSX</string>
+    </array>
+
+    <!-- Required Device Capabilities -->
+    <key>UIRequiredDeviceCapabilities</key>
+    <array>
+        <string>arm64</string>
+        <string>x86_64</string>
+    </array>
+
+    <!-- Background Modes -->
+    <key>NSSystemExtensionBackgroundTaskUsageDescription</key>
+    <string>Tamandua File Monitor runs continuously in the background to protect your system from threats.</string>
+</dict>
+</plist>

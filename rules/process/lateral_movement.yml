@@ -1,0 +1,416 @@
+# Lateral Movement Detection Rules
+# MITRE ATT&CK Tactic: TA0008 - Lateral Movement
+
+version: "1.0"
+metadata:
+  author: Tamandua Security Team
+  description: Detection rules for lateral movement techniques
+  last_updated: "2024-01-15"
+
+rules:
+  # ==========================================================================
+  # PsExec and Variants
+  # ==========================================================================
+
+  - id: LATERAL-001
+    name: PsExec Execution
+    description: Detects PsExec remote execution tool
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [lateral-movement, execution]
+      techniques: [T1570, T1021.002, T1569.002]
+    conditions:
+      any:
+        - process.name:
+            contains: [psexec, psexec64, psexesvc]
+        - process.cmdline:
+            contains: [psexec, "\\\\", "-accepteula", "-s ", "-d "]
+    response:
+      - alert
+      - collect_evidence
+    tags: [psexec, remote-execution, sysinternals]
+    false_positives:
+      - Legitimate administrative tools
+    confidence: 0.85
+
+  - id: LATERAL-002
+    name: Impacket SMBExec
+    description: Detects Impacket smbexec lateral movement
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [lateral-movement, execution]
+      techniques: [T1021.002, T1569.002]
+    conditions:
+      any:
+        - process.name:
+            contains: smbexec
+        - process.cmdline:
+            contains: [smbexec, "-hashes", "-dc-ip"]
+    response:
+      - alert
+      - isolate_host
+    tags: [impacket, smbexec, lateral-movement]
+    confidence: 0.90
+
+  - id: LATERAL-003
+    name: Impacket WMIExec
+    description: Detects Impacket wmiexec lateral movement
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [lateral-movement, execution]
+      techniques: [T1047, T1021.006]
+    conditions:
+      any:
+        - process.name:
+            contains: wmiexec
+        - process.cmdline:
+            contains: [wmiexec, "-hashes", "-k ", "-dc-ip"]
+    response:
+      - alert
+      - isolate_host
+    tags: [impacket, wmiexec, lateral-movement]
+    confidence: 0.90
+
+  - id: LATERAL-004
+    name: Impacket DCOMExec
+    description: Detects Impacket dcomexec lateral movement
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [lateral-movement, execution]
+      techniques: [T1021.003]
+    conditions:
+      any:
+        - process.name:
+            contains: dcomexec
+        - process.cmdline:
+            contains: [dcomexec, "-object", "MMC20", "ShellWindows"]
+    response:
+      - alert
+      - isolate_host
+    tags: [impacket, dcomexec, lateral-movement]
+    confidence: 0.90
+
+  - id: LATERAL-005
+    name: Impacket ATExec
+    description: Detects Impacket atexec lateral movement
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [lateral-movement, execution]
+      techniques: [T1053.002]
+    conditions:
+      any:
+        - process.name:
+            contains: atexec
+        - process.cmdline:
+            contains: [atexec, "-hashes", "-dc-ip"]
+    response:
+      - alert
+      - isolate_host
+    tags: [impacket, atexec, lateral-movement]
+    confidence: 0.90
+
+  # ==========================================================================
+  # WinRM
+  # ==========================================================================
+
+  - id: LATERAL-006
+    name: WinRM Remote Command Execution
+    description: Detects WinRM-based remote command execution
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [lateral-movement, execution]
+      techniques: [T1021.006]
+    conditions:
+      any:
+        - process.cmdline:
+            contains: [Invoke-Command, Enter-PSSession, "-ComputerName", "-Session"]
+        - process.cmdline:
+            regex: (?i)winrs.*-r:
+    response:
+      - alert
+    tags: [winrm, remote-execution]
+    false_positives:
+      - Legitimate remote administration
+    confidence: 0.75
+
+  - id: LATERAL-007
+    name: Evil-WinRM Usage
+    description: Detects Evil-WinRM tool execution
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [lateral-movement]
+      techniques: [T1021.006]
+    conditions:
+      any:
+        - process.name:
+            contains: evil-winrm
+        - process.cmdline:
+            contains: [evil-winrm, "-i ", "-u ", "-p "]
+    response:
+      - alert
+      - isolate_host
+    tags: [evil-winrm, lateral-movement]
+    confidence: 0.95
+
+  # ==========================================================================
+  # RDP
+  # ==========================================================================
+
+  - id: LATERAL-008
+    name: RDP Session Hijacking
+    description: Detects potential RDP session hijacking
+    category: process
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [lateral-movement]
+      techniques: [T1563.002]
+    conditions:
+      all:
+        - process.name:
+            ends_with: tscon.exe
+        - process.cmdline:
+            regex: /dest:rdp-tcp#\d+
+    response:
+      - alert
+      - notify_soc
+    tags: [rdp-hijacking, session-takeover]
+    confidence: 0.90
+
+  - id: LATERAL-009
+    name: MSTSC with Password on Command Line
+    description: Detects RDP client with credentials in command line
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [lateral-movement]
+      techniques: [T1021.001]
+    conditions:
+      all:
+        - process.name:
+            ends_with: mstsc.exe
+        - process.cmdline:
+            contains: [/password:, /p:]
+    response:
+      - alert
+    tags: [rdp, credential-exposure]
+    confidence: 0.85
+
+  # ==========================================================================
+  # Pass-the-Hash / Pass-the-Ticket
+  # ==========================================================================
+
+  - id: LATERAL-010
+    name: Pass-the-Hash Attack Indicators
+    description: Detects tools commonly used for pass-the-hash attacks
+    category: process
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [lateral-movement]
+      techniques: [T1550.002]
+    conditions:
+      any:
+        - process.cmdline:
+            contains: [sekurlsa::pth, pth-winexe, pth-wmic]
+        - process.cmdline:
+            regex: (?i)-hashes\s+[a-f0-9]{32}:[a-f0-9]{32}
+    response:
+      - alert
+      - isolate_host
+      - notify_soc
+    tags: [pass-the-hash, credential-abuse]
+    confidence: 0.95
+
+  - id: LATERAL-011
+    name: Pass-the-Ticket Attack
+    description: Detects pass-the-ticket attack indicators
+    category: process
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [lateral-movement]
+      techniques: [T1550.003]
+    conditions:
+      any:
+        - process.cmdline:
+            contains: [kerberos::ptt, ".kirbi", klist, "/ticket:"]
+    response:
+      - alert
+      - isolate_host
+      - notify_soc
+    tags: [pass-the-ticket, kerberos]
+    confidence: 0.90
+
+  # ==========================================================================
+  # SMB/Admin Shares
+  # ==========================================================================
+
+  - id: LATERAL-012
+    name: Net Use to Admin Share
+    description: Detects mounting of administrative shares
+    category: process
+    severity: medium
+    enabled: true
+    mitre:
+      tactics: [lateral-movement]
+      techniques: [T1021.002]
+    conditions:
+      all:
+        - process.name:
+            ends_with: net.exe
+        - process.cmdline:
+            regex: (?i)use.*\\\\.*\$
+    response:
+      - alert
+    tags: [admin-share, smb]
+    false_positives:
+      - Legitimate file sharing operations
+    confidence: 0.65
+
+  - id: LATERAL-013
+    name: Copy to Remote Admin Share
+    description: Detects file copy to remote admin shares
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [lateral-movement]
+      techniques: [T1021.002, T1570]
+    conditions:
+      any:
+        - process.cmdline:
+            regex: (?i)(copy|xcopy|robocopy).*\\\\.*\\(admin|c|d)\$
+    response:
+      - alert
+    tags: [admin-share, file-copy]
+    false_positives:
+      - Legitimate administrative operations
+    confidence: 0.75
+
+  # ==========================================================================
+  # DCOM
+  # ==========================================================================
+
+  - id: LATERAL-014
+    name: DCOM ShellBrowserWindow Abuse
+    description: Detects DCOM lateral movement via ShellBrowserWindow
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [lateral-movement]
+      techniques: [T1021.003]
+    conditions:
+      any:
+        - process.cmdline:
+            contains: [ShellBrowserWindow, ShellWindows, "9BA05972-F6A8-11CF-A442-00A0C90A8F39"]
+    response:
+      - alert
+    tags: [dcom, lateral-movement]
+    confidence: 0.85
+
+  - id: LATERAL-015
+    name: DCOM MMC20 Abuse
+    description: Detects DCOM lateral movement via MMC20
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [lateral-movement]
+      techniques: [T1021.003]
+    conditions:
+      any:
+        - process.cmdline:
+            contains: [MMC20.Application, "49B2791A-B1AE-4C90-9B8E-E860BA07F889"]
+    response:
+      - alert
+    tags: [dcom, mmc20, lateral-movement]
+    confidence: 0.85
+
+  # ==========================================================================
+  # Reconnaissance
+  # ==========================================================================
+
+  - id: LATERAL-016
+    name: BloodHound AD Enumeration
+    description: Detects BloodHound Active Directory enumeration
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [discovery, lateral-movement]
+      techniques: [T1087.002, T1069.002]
+    conditions:
+      any:
+        - process.name:
+            contains: [bloodhound, sharphound, azurehound]
+        - process.cmdline:
+            contains: [SharpHound, "-c All", "-d ", "--CollectionMethods"]
+    response:
+      - alert
+      - kill_process
+    tags: [bloodhound, ad-enumeration, reconnaissance]
+    confidence: 0.95
+
+  - id: LATERAL-017
+    name: ADRecon Tool
+    description: Detects ADRecon Active Directory enumeration
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [discovery]
+      techniques: [T1087.002]
+    conditions:
+      any:
+        - process.name:
+            contains: adrecon
+        - process.cmdline:
+            contains: [ADRecon, "-DomainController", "-Collect"]
+    response:
+      - alert
+      - kill_process
+    tags: [adrecon, ad-enumeration]
+    confidence: 0.90
+
+  - id: LATERAL-018
+    name: PowerView Usage
+    description: Detects PowerView AD enumeration module
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [discovery]
+      techniques: [T1087.002, T1069.001]
+    conditions:
+      any:
+        - process.cmdline:
+            contains:
+              - Get-DomainUser
+              - Get-DomainGroup
+              - Get-DomainComputer
+              - Get-NetUser
+              - Get-NetGroup
+              - Get-NetComputer
+              - Find-LocalAdminAccess
+              - Invoke-UserHunter
+    response:
+      - alert
+    tags: [powerview, ad-enumeration]
+    confidence: 0.85

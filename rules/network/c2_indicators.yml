@@ -1,0 +1,267 @@
+# Command and Control Detection Rules
+# MITRE ATT&CK Tactic: TA0011 - Command and Control
+
+version: "1.0"
+metadata:
+  author: Tamandua Security Team
+  description: Network-based C2 detection rules
+  last_updated: "2024-01-15"
+
+rules:
+  # ==========================================================================
+  # Suspicious Ports
+  # ==========================================================================
+
+  - id: C2-NET-001
+    name: Common C2 Port Connection
+    description: Detects connections to commonly abused C2 ports
+    category: network
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [command-and-control]
+      techniques: [T1571, T1095]
+    conditions:
+      any:
+        - network.remote_port:
+            in: ["4444", "5555", "6666", "7777", "8888", "1337", "31337", "12345"]
+    response:
+      - alert
+      - collect_evidence
+    tags: [suspicious-port, c2]
+    false_positives:
+      - Legitimate services on non-standard ports
+    confidence: 0.70
+
+  - id: C2-NET-002
+    name: Non-Standard HTTPS Port
+    description: Detects HTTPS-like traffic on non-standard ports
+    category: network
+    severity: medium
+    enabled: true
+    mitre:
+      tactics: [command-and-control]
+      techniques: [T1571]
+    conditions:
+      all:
+        - network.protocol:
+            eq: tcp
+        - network.remote_port:
+            in: ["8443", "9443", "4443", "2443", "10443"]
+    response:
+      - alert
+    tags: [non-standard-port, https]
+    false_positives:
+      - Alternative HTTPS services
+    confidence: 0.60
+
+  # ==========================================================================
+  # DNS Tunneling
+  # ==========================================================================
+
+  - id: C2-NET-003
+    name: DNS Tunneling - Long Query
+    description: Detects unusually long DNS queries indicating tunneling
+    category: dns
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [command-and-control, exfiltration]
+      techniques: [T1071.004, T1048]
+    conditions:
+      any:
+        - dns.query:
+            regex: ^.{60,}\.
+    response:
+      - alert
+      - collect_evidence
+    tags: [dns-tunneling, exfiltration]
+    confidence: 0.80
+
+  - id: C2-NET-004
+    name: DNS TXT Query to Suspicious Domain
+    description: Detects TXT record queries often used for C2
+    category: dns
+    severity: medium
+    enabled: true
+    mitre:
+      tactics: [command-and-control]
+      techniques: [T1071.004]
+    conditions:
+      all:
+        - dns.query_type:
+            eq: TXT
+        # Exclude common legitimate TXT queries
+        - dns.query:
+            regex: ^(?!.*(_dmarc|_spf|_domainkey|_acme-challenge))
+    response:
+      - alert
+    tags: [dns-txt, c2]
+    false_positives:
+      - Legitimate TXT record lookups
+    confidence: 0.65
+
+  # ==========================================================================
+  # Suspicious TLDs
+  # ==========================================================================
+
+  - id: C2-NET-005
+    name: Suspicious TLD Connection
+    description: Detects connections to commonly abused TLDs
+    category: dns
+    severity: medium
+    enabled: true
+    mitre:
+      tactics: [command-and-control]
+      techniques: [T1071.001, T1583.001]
+    conditions:
+      any:
+        - dns.query:
+            ends_with: [".tk", ".ml", ".ga", ".cf", ".gq", ".xyz", ".top", ".buzz", ".work", ".click", ".link"]
+    response:
+      - alert
+    tags: [suspicious-tld, free-domain]
+    false_positives:
+      - Legitimate services on these TLDs
+    confidence: 0.55
+
+  # ==========================================================================
+  # Known C2 Infrastructure
+  # ==========================================================================
+
+  - id: C2-NET-006
+    name: Cobalt Strike Team Server Port Indicator
+    description: Weak single-signal indicator for the Cobalt Strike team server port. HTTP/S beacon ports require protocol, timing, process, JA3/SNI, URI, or IOC context before alerting as high severity.
+    category: network
+    severity: medium
+    enabled: true
+    mitre:
+      tactics: [command-and-control]
+      techniques: [T1071.001]
+    conditions:
+      any:
+        - network.remote_port:
+            in: ["50050"]
+    response:
+      - alert
+      - collect_evidence
+    tags: [cobalt-strike, c2]
+    # Port-only C2 indicators are intentionally weak. Escalation belongs in the
+    # backend/NDR correlation layer when protocol, timing, process, JA3/SNI, URI,
+    # or threat-intel evidence supports the connection.
+    confidence: 0.45
+
+  - id: C2-NET-007
+    name: Metasploit Default Ports
+    description: Detects connections to default Metasploit handler ports
+    category: network
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [command-and-control]
+      techniques: [T1071.001]
+    conditions:
+      any:
+        - network.remote_port:
+            in: ["4444", "4445", "5555"]
+    response:
+      - alert
+      - collect_evidence
+    tags: [metasploit, c2]
+    confidence: 0.70
+
+  # ==========================================================================
+  # Tor/Proxy Detection
+  # ==========================================================================
+
+  - id: C2-NET-008
+    name: Tor Network Connection
+    description: Detects connections to Tor entry/exit nodes
+    category: network
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [command-and-control]
+      techniques: [T1090.003]
+    conditions:
+      any:
+        - network.remote_port:
+            in: ["9001", "9030", "9040", "9050", "9051", "9150", "9151"]
+    response:
+      - alert
+    tags: [tor, anonymization]
+    false_positives:
+      - Legitimate Tor usage
+    confidence: 0.75
+
+  - id: C2-NET-009
+    name: SOCKS Proxy Port
+    description: Detects connections to common SOCKS proxy ports
+    category: network
+    severity: medium
+    enabled: true
+    mitre:
+      tactics: [command-and-control]
+      techniques: [T1090.001]
+    conditions:
+      any:
+        - network.remote_port:
+            in: ["1080", "1081", "8080", "3128"]
+    response:
+      - alert
+    tags: [proxy, socks]
+    false_positives:
+      - Legitimate proxy usage
+    confidence: 0.60
+
+  # ==========================================================================
+  # Beaconing Detection
+  # ==========================================================================
+
+  - id: C2-NET-010
+    name: High-Frequency Outbound Connections
+    description: Detects processes making many outbound connections
+    category: behavioral
+    severity: medium
+    enabled: true
+    mitre:
+      tactics: [command-and-control]
+      techniques: [T1071.001]
+    conditions:
+      all:
+        - behavior.event_rate:
+            gt: 10
+    response:
+      - alert
+    tags: [beaconing, high-frequency]
+    false_positives:
+      - Web browsers
+      - Update services
+    confidence: 0.50
+
+  # ==========================================================================
+  # IP Ranges
+  # ==========================================================================
+
+  - id: C2-NET-011
+    name: Connection to Private IP from Internet-facing Process
+    description: Detects potential pivoting through internal networks
+    category: network
+    severity: medium
+    enabled: true
+    mitre:
+      tactics: [command-and-control, lateral-movement]
+      techniques: [T1090.002]
+    conditions:
+      any:
+        - network.remote_ip:
+            cidr: "10.0.0.0/8"
+        - network.remote_ip:
+            cidr: "172.16.0.0/12"
+        - network.remote_ip:
+            cidr: "192.168.0.0/16"
+    response:
+      - log_only
+    tags: [internal-network, pivoting]
+    # This is informational, not typically an alert
+    confidence: 0.40

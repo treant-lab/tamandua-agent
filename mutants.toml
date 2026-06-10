@@ -1,0 +1,228 @@
+# cargo-mutants configuration for Tamandua Rust Agent
+# Validates test quality through mutation testing
+
+# Global settings
+[mutants]
+# Timeout for each mutant test run (seconds)
+# Should be 2-3x normal test time
+timeout = 120
+
+# Number of parallel jobs
+# Adjust based on available CPU cores
+jobs = 4
+
+# Error values to return for functions
+# Tests if error handling is properly tested
+error_values = [
+    "Err(anyhow::anyhow!(\"mutation\"))",
+    "Err(std::io::Error::new(std::io::ErrorKind::Other, \"mutation\"))",
+]
+
+# Patterns for files to mutate
+[[mutants.patterns]]
+# Collectors - critical telemetry gathering
+include = [
+    "src/collectors/process.rs",
+    "src/collectors/file.rs",
+    "src/collectors/network.rs",
+    "src/collectors/dns.rs",
+    "src/collectors/registry.rs",
+]
+# Focus on critical methods
+functions = [
+    "next_event",
+    "collect",
+    "parse",
+    "normalize",
+]
+
+[[mutants.patterns]]
+# Transport layer - critical for agent communication
+include = [
+    "src/transport/*.rs",
+]
+exclude = [
+    "src/transport/tests.rs",
+]
+
+[[mutants.patterns]]
+# Response actions - critical for remediation
+include = [
+    "src/response/*.rs",
+]
+functions = [
+    "execute",
+    "kill_process",
+    "quarantine",
+    "isolate",
+    "validate",
+]
+
+[[mutants.patterns]]
+# Analyzers - critical for local detection
+include = [
+    "src/analyzers/*.rs",
+]
+functions = [
+    "analyze",
+    "calculate_hash",
+    "calculate_entropy",
+    "is_suspicious",
+]
+
+[[mutants.patterns]]
+# Deception layer - honeyfile monitoring
+include = [
+    "src/deception/*.rs",
+]
+
+# Files to exclude from all mutation
+exclude = [
+    # Main entry point (integration logic, not business logic)
+    "src/main.rs",
+
+    # Test files
+    "src/**/tests.rs",
+    "tests/**/*.rs",
+
+    # Integration tests
+    "tests/**",
+
+    # Generated code
+    "src/generated/**",
+
+    # Platform-specific FFI (hard to test portably)
+    "src/platform/ffi.rs",
+
+    # Simple configuration structs
+    "src/config.rs",
+]
+
+# Mutation testing options
+[mutants.options]
+# Show colored output
+color = true
+
+# Show progress during mutation
+show_progress = true
+
+# Generate detailed report
+detailed_report = true
+
+# Only test workspace members
+workspace = true
+
+# Continue after finding survived mutants
+# Set to false to fail fast
+continue_on_failure = true
+
+# Test features
+features = ["yara"]
+
+# Test timeout strategy
+timeout_multiplier = 2.0
+
+# Minimum mutation score to pass (percentage)
+# Below this threshold, mutation testing fails
+minimum_score = 75.0
+
+# Test command customization
+[mutants.test]
+# Additional cargo test flags
+args = [
+    "--lib",
+    "--tests",
+    "--no-fail-fast",
+]
+
+# Environment variables for tests
+env = {}
+
+# Specific mutation operators
+[mutants.operators]
+# Replace arithmetic operators
+# Tests: a + b -> a - b, a * b -> a / b
+arithmetic = true
+
+# Replace comparison operators
+# Tests: a > b -> a >= b, a == b -> a != b
+comparison = true
+
+# Replace logical operators
+# Tests: a && b -> a || b, !a -> a
+logical = true
+
+# Replace constants
+# Tests: true -> false, 0 -> 1, Some(x) -> None
+constants = true
+
+# Replace function calls
+# Tests: remove .unwrap(), change .ok() to .err()
+function_calls = true
+
+# Replace return values
+# Tests: return x -> return !x, return Ok(x) -> return Err(...)
+returns = true
+
+# Replace match arms
+# Tests: swap match arm order, change patterns
+match_arms = true
+
+# Module-specific thresholds
+[mutants.thresholds]
+# Critical security modules require higher scores
+"collectors::process" = 85
+"collectors::file" = 85
+"collectors::network" = 85
+"response" = 90
+"analyzers" = 85
+"transport" = 80
+
+# Report configuration
+[mutants.report]
+# Output directory for reports
+output_dir = "mutants.out"
+
+# Report format
+format = "json"
+
+# Additional report formats
+additional_formats = ["text", "markdown"]
+
+# Show survived mutants (need better tests)
+show_survived = true
+
+# Show killed mutants (for verification)
+show_killed = false
+
+# Show timeout mutants
+show_timeout = true
+
+# Show caught mutants (compilation errors)
+show_caught = false
+
+# Group results by file
+group_by = "file"
+
+# Sort by score (worst first)
+sort_by = "score"
+
+# Advanced options
+[mutants.advanced]
+# Skip functions with #[mutants::skip] attribute
+respect_skip_attribute = true
+
+# Skip tests for generated mutants
+skip_generated = true
+
+# Use incremental compilation
+incremental = true
+
+# Capture test output for failed mutants
+capture_output = true
+
+# Save baseline test results
+save_baseline = true
+
+# Mutant diff context lines
+diff_context = 3

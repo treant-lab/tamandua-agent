@@ -1,0 +1,53 @@
+[Unit]
+Description=Tamandua EDR Agent
+Documentation=https://github.com/treant-lab/tamandua-agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tamandua
+Group=tamandua
+ExecStart=/usr/bin/tamandua-agent --config /etc/tamandua/agent.toml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tamandua-agent
+
+# Security hardening
+NoNewPrivileges=no
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+# Required capabilities for EDR functionality
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_SYS_RESOURCE
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_SYS_RESOURCE
+
+# Working directories
+WorkingDirectory=/var/lib/tamandua
+StateDirectory=tamandua
+RuntimeDirectory=tamandua
+ConfigurationDirectory=tamandua
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+LimitMEMLOCK=infinity
+
+# Allow reading /proc for process monitoring
+ReadOnlyPaths=/proc
+
+[Install]
+WantedBy=multi-user.target

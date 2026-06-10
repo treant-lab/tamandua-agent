@@ -1,0 +1,341 @@
+# Registry Persistence Detection Rules
+# MITRE ATT&CK Tactic: TA0003 - Persistence
+
+version: "1.0"
+metadata:
+  author: Tamandua Security Team
+  description: Detection rules for registry-based persistence mechanisms
+  last_updated: "2024-01-15"
+
+rules:
+  # ==========================================================================
+  # Run Keys
+  # ==========================================================================
+
+  - id: REG-PERSIST-001
+    name: Run Key Modification
+    description: Detects modification of Run/RunOnce registry keys
+    category: registry
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [persistence]
+      techniques: [T1547.001]
+    conditions:
+      any:
+        - registry.key_path:
+            contains:
+              - "\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"
+              - "\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce"
+              - "\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnceEx"
+              - "\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunServices"
+              - "\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunServicesOnce"
+    response:
+      - alert
+    tags: [run-key, persistence, autorun]
+    false_positives:
+      - Legitimate software installation
+    confidence: 0.70
+
+  - id: REG-PERSIST-002
+    name: Suspicious Run Key Value
+    description: Detects Run keys pointing to suspicious locations
+    category: registry
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [persistence]
+      techniques: [T1547.001]
+    conditions:
+      all:
+        - registry.key_path:
+            contains: "\\CurrentVersion\\Run"
+        - registry.value_data:
+            regex: (?i)(temp|tmp|appdata\\local\\temp|downloads|public)
+    response:
+      - alert
+      - notify_soc
+    tags: [run-key, suspicious-path]
+    confidence: 0.85
+
+  # ==========================================================================
+  # Winlogon
+  # ==========================================================================
+
+  - id: REG-PERSIST-003
+    name: Winlogon Shell Modification
+    description: Detects modification of Winlogon Shell
+    category: registry
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [persistence]
+      techniques: [T1547.004]
+    conditions:
+      all:
+        - registry.key_path:
+            contains: "\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon"
+        - registry.value_name:
+            in: [Shell, Userinit]
+    response:
+      - alert
+      - notify_soc
+    tags: [winlogon, shell-hijack]
+    confidence: 0.90
+
+  - id: REG-PERSIST-004
+    name: Winlogon Notify DLL
+    description: Detects registration of Winlogon notification DLLs
+    category: registry
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [persistence]
+      techniques: [T1547.004]
+    conditions:
+      any:
+        - registry.key_path:
+            contains: "\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\Notify"
+    response:
+      - alert
+    tags: [winlogon, notify-dll]
+    confidence: 0.85
+
+  # ==========================================================================
+  # Services
+  # ==========================================================================
+
+  - id: REG-PERSIST-005
+    name: Service Registry Creation
+    description: Detects new service registration in registry
+    category: registry
+    severity: medium
+    enabled: true
+    mitre:
+      tactics: [persistence]
+      techniques: [T1543.003]
+    conditions:
+      any:
+        - registry.key_path:
+            contains: "\\SYSTEM\\CurrentControlSet\\Services\\"
+    response:
+      - alert
+    tags: [service, persistence]
+    false_positives:
+      - Legitimate service installation
+    confidence: 0.60
+
+  - id: REG-PERSIST-006
+    name: Service ImagePath Modification
+    description: Detects modification of service executable path
+    category: registry
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [persistence]
+      techniques: [T1543.003]
+    conditions:
+      all:
+        - registry.key_path:
+            contains: "\\SYSTEM\\CurrentControlSet\\Services\\"
+        - registry.value_name:
+            eq: ImagePath
+    response:
+      - alert
+    tags: [service, imagepath, hijack]
+    false_positives:
+      - Legitimate service updates
+    confidence: 0.75
+
+  # ==========================================================================
+  # COM Hijacking
+  # ==========================================================================
+
+  - id: REG-PERSIST-007
+    name: COM Object Hijacking
+    description: Detects potential COM object hijacking
+    category: registry
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [persistence]
+      techniques: [T1546.015]
+    conditions:
+      any:
+        - registry.key_path:
+            regex: (?i)\\Classes\\CLSID\\.*\\InprocServer32
+        - registry.key_path:
+            regex: (?i)\\Classes\\CLSID\\.*\\LocalServer32
+    response:
+      - alert
+    tags: [com-hijack, persistence]
+    false_positives:
+      - Legitimate COM registration
+    confidence: 0.70
+
+  # ==========================================================================
+  # AppInit DLLs
+  # ==========================================================================
+
+  - id: REG-PERSIST-008
+    name: AppInit_DLLs Modification
+    description: Detects modification of AppInit_DLLs for DLL injection
+    category: registry
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [persistence, privilege-escalation]
+      techniques: [T1546.010]
+    conditions:
+      all:
+        - registry.key_path:
+            contains: "\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Windows"
+        - registry.value_name:
+            in: [AppInit_DLLs, LoadAppInit_DLLs]
+    response:
+      - alert
+      - notify_soc
+    tags: [appinit-dlls, dll-injection]
+    confidence: 0.95
+
+  # ==========================================================================
+  # Image File Execution Options
+  # ==========================================================================
+
+  - id: REG-PERSIST-009
+    name: Image File Execution Options Debugger
+    description: Detects IFEO debugger persistence
+    category: registry
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [persistence, privilege-escalation]
+      techniques: [T1546.012]
+    conditions:
+      all:
+        - registry.key_path:
+            contains: "\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\"
+        - registry.value_name:
+            eq: Debugger
+    response:
+      - alert
+      - notify_soc
+    tags: [ifeo, debugger, persistence]
+    confidence: 0.95
+
+  - id: REG-PERSIST-010
+    name: Accessibility Features Hijack
+    description: Detects IFEO hijacking of accessibility features
+    category: registry
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [persistence, privilege-escalation]
+      techniques: [T1546.008]
+    conditions:
+      all:
+        - registry.key_path:
+            regex: (?i)\\Image File Execution Options\\(sethc|utilman|osk|narrator|magnify)\.exe
+        - registry.value_name:
+            eq: Debugger
+    response:
+      - alert
+      - notify_soc
+    tags: [ifeo, accessibility, sticky-keys]
+    confidence: 0.98
+
+  # ==========================================================================
+  # Security Settings
+  # ==========================================================================
+
+  - id: REG-PERSIST-011
+    name: Disable Windows Defender Registry
+    description: Detects registry changes to disable Windows Defender
+    category: registry
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [defense-evasion]
+      techniques: [T1562.001]
+    conditions:
+      any:
+        - registry.key_path:
+            contains:
+              - "\\SOFTWARE\\Policies\\Microsoft\\Windows Defender"
+              - "\\SOFTWARE\\Microsoft\\Windows Defender"
+        - registry.value_name:
+            in: [DisableAntiSpyware, DisableRealtimeMonitoring, DisableBehaviorMonitoring, DisableIOAVProtection]
+    response:
+      - alert
+      - notify_soc
+    tags: [defender, security-tampering]
+    confidence: 0.95
+
+  - id: REG-PERSIST-012
+    name: Disable UAC Registry
+    description: Detects registry changes to disable UAC
+    category: registry
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [defense-evasion]
+      techniques: [T1548.002]
+    conditions:
+      all:
+        - registry.key_path:
+            contains: "\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System"
+        - registry.value_name:
+            in: [EnableLUA, ConsentPromptBehaviorAdmin, PromptOnSecureDesktop]
+    response:
+      - alert
+    tags: [uac, security-tampering]
+    confidence: 0.85
+
+  # ==========================================================================
+  # Browser Hijacking
+  # ==========================================================================
+
+  - id: REG-PERSIST-013
+    name: Browser Helper Object Registration
+    description: Detects registration of Browser Helper Objects
+    category: registry
+    severity: medium
+    enabled: true
+    mitre:
+      tactics: [persistence]
+      techniques: [T1176]
+    conditions:
+      any:
+        - registry.key_path:
+            contains: "\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Browser Helper Objects"
+    response:
+      - alert
+    tags: [bho, browser-extension]
+    false_positives:
+      - Legitimate browser extensions
+    confidence: 0.65
+
+  # ==========================================================================
+  # LSA Secrets
+  # ==========================================================================
+
+  - id: REG-PERSIST-014
+    name: LSA Security Package Modification
+    description: Detects modification of LSA Security Packages
+    category: registry
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [persistence, credential-access]
+      techniques: [T1547.005]
+    conditions:
+      all:
+        - registry.key_path:
+            contains: "\\SYSTEM\\CurrentControlSet\\Control\\Lsa"
+        - registry.value_name:
+            in: [Security Packages, Authentication Packages]
+    response:
+      - alert
+      - notify_soc
+    tags: [lsa, credential-theft]
+    confidence: 0.95

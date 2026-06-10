@@ -1,0 +1,358 @@
+[package]
+name = "tamandua-agent"
+version = "0.1.0"
+edition = "2021"
+authors = ["Tamandua Team"]
+description = "Tamandua EDR Agent - Endpoint telemetry and response"
+license = "Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/treant-lab/tamandua-agent"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.34", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec", "io"] }
+
+# WebSocket client
+tokio-tungstenite = { version = "0.21", features = ["native-tls", "rustls-tls-native-roots"] }
+futures-util = "0.3"
+futures = "0.3"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+prost = "0.12"
+rmp-serde = "1.3"  # MessagePack for IPC (must match GUI version)
+
+# HTTP client (for REST endpoints and threat intel APIs)
+reqwest = { version = "0.11", features = ["json", "native-tls", "multipart", "stream"] }
+
+# Configuration
+config = "0.13"
+toml = "0.8"
+
+# Logging & Tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
+opentelemetry = "0.21"
+opentelemetry_sdk = { version = "0.21", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.14", features = ["tokio", "grpc-tonic"] }
+opentelemetry-jaeger = { version = "0.20", features = ["rt-tokio"] }
+tracing-opentelemetry = "0.22"
+
+# System information
+sysinfo = "0.30"
+hostname = "0.4"
+
+# Cryptography
+sha2 = "0.10"
+sha1 = "0.10"
+md5 = "0.7"
+aes-gcm = "0.10"  # Authenticated encryption (AES-256-GCM) for quarantined artifacts at rest
+hex = { version = "0.4", features = ["serde"] }
+base64 = "0.22"
+native-tls = "0.2"
+hmac = "0.12"
+tokio-native-tls = "0.3"
+rustls = "0.22"
+rustls-native-certs = "0.7"
+rustls-pemfile = "2"
+rustls-pki-types = "1"
+ed25519-dalek = { version = "2", features = ["std", "rand_core"] }
+rcgen = { version = "0.13", features = ["pem"] }  # CSR generation (pure Rust, no OpenSSL)
+
+# Compression
+flate2 = "1.0"
+
+# SQLite for file journal (ransomware rollback)
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# YARA
+yara = { version = "0.25", optional = true }
+
+# ONNX Runtime for ML inference (used by both `onnx` and `ml-local` features)
+ort = { version = "2.0.0-rc.11", optional = true, features = ["load-dynamic"] }
+ndarray = { version = "0.17", optional = true }
+image = { version = "0.25", optional = true, default-features = false, features = ["png", "jpeg"] }
+
+# File watching
+notify = "6.1"
+
+# DNS monitoring
+pcap = { version = "2.0", optional = true }
+dns-parser = { version = "0.8", optional = true }
+
+# HTTP parsing for DPI
+httparse = "1.8"
+
+# Directory walking
+walkdir = "2.4"
+glob = "0.3"
+filetime = "0.2"
+
+# Regex for pattern matching
+regex = "1.10"
+
+# UUID
+uuid = { version = "1.6", features = ["v4", "serde"] }
+url = "2.4" # Added for URL parsing
+
+# Directories
+dirs = "5.0"
+
+# Shell expansion and user info
+shellexpand = "3.1"
+whoami = "1.5"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Random number generation
+rand = "0.8"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Password hashing (Argon2id for installation token protection)
+argon2 = "0.5"
+
+# OS information (for enrollment agent info)
+os_info = "3"
+
+# Async trait support
+async-trait = "0.1"
+
+# CLI
+clap = { version = "4.4", features = ["derive"] }
+
+# Compression (optional - requires C compiler for cross-compilation)
+zstd = { version = "0.13", optional = true }
+
+# RAII guard for cleanup
+scopeguard = "1.2"
+
+# Lazy static initialization
+lazy_static = "1.4"
+once_cell = "1.19"
+
+# Concurrent data structures
+dashmap = "5.5"
+
+# Synchronization primitives
+parking_lot = "0.12"
+
+# Prometheus metrics
+prometheus = { version = "0.13", features = ["process"] }
+
+# Windows service support
+windows-service = "0.7"
+
+# WASM Plugin System
+wasmtime = { version = "20.0", optional = true }
+wasmtime-wasi = { version = "20.0", optional = true }
+wasi-common = { version = "20.0", optional = true }
+cap-std = { version = "3.0", optional = true }  # Capability-based filesystem access
+
+# Performance optimizations
+crossbeam-queue = "0.3"
+crossbeam-utils = "0.8"
+num_cpus = "1.16"
+bytes = "1.5"
+byteorder = "1.5"
+
+# Coverage profile
+[profile.coverage]
+inherits = "test"
+debug = true
+opt-level = 0
+overflow-checks = true
+lto = false
+incremental = false
+codegen-units = 256
+
+# Platform-specific
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
+tray-icon = "0.14"
+native-dialog = "0.7"
+windows = { version = "0.52", features = [
+    "implement",
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Time",
+    "Win32_System_Memory",
+    "Win32_System_Diagnostics_Etw",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Antimalware",
+    "Win32_Security",
+    "Win32_Security_WinTrust",
+    "Win32_Security_Cryptography",
+    "Win32_Security_Cryptography_Catalog",
+    "Win32_Security_Authorization",
+    "Win32_Security_Authentication_Identity",
+    "Win32_System_Registry",
+    "Win32_System_EventLog",
+    "Win32_Storage_FileSystem",
+    "Win32_Networking_WinSock",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_System_Com",
+    "Win32_System_Ole",
+    "Win32_System_Wmi",
+    "Win32_System_Rpc",
+    "Win32_System_LibraryLoader",
+    "Win32_System_WindowsProgramming",
+    "Win32_System_SystemInformation",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_DataExchange",
+    "Win32_System_Kernel",
+    "Win32_System_Variant",
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Devices_Properties",
+    "Win32_System_Services",
+    "Win32_Storage_InstallableFileSystems",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
+    "Win32_System_Pipes",
+    "Win32_System_Console",
+    "Win32_System_TaskScheduler",
+    "Wdk_System_Threading",
+] }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.27", features = ["process", "signal", "net", "user", "fs", "term", "sched", "mman"] }
+libc = "0.2"
+tikv-jemallocator = { version = "0.5", optional = true }
+
+# macOS-specific dependencies
+[target.'cfg(target_os = "macos")'.dependencies]
+tray-icon = "0.14"
+native-dialog = "0.7"
+core-foundation = "0.9"
+core-foundation-sys = "0.8"
+security-framework = "2.9"
+security-framework-sys = "2.9"
+mach2 = "0.4"
+goblin = "0.8"  # MachO parsing for injection detection
+plist = "=1.6.1" # Property list parsing for launchd plists; keep compatible with Rust 1.86
+
+# eBPF support (Linux only)
+[target.'cfg(target_os = "linux")'.dependencies]
+aya = { version = "0.12", features = ["async_tokio"] }
+aya-log = "0.2"
+notify-rust = "4.10"
+
+[features]
+default = ["compression"]
+compression = ["dep:zstd"]
+yara = ["dep:yara"]
+onnx = ["dep:ort", "dep:ndarray", "dep:image"]
+ml-local = ["dep:ort", "dep:ndarray"]  # Feature-based ML inference (no image dep)
+ml = ["ml-local"]  # Incremental model loading (includes ml-local features)
+dns-capture = ["dep:pcap", "dep:dns-parser"]
+ebpf = []  # Enable eBPF collection (requires native kernel headers, not for cross-compile)
+no-ebpf = []  # Disable eBPF for cross-compilation (ARM builds use this)
+performance = []  # Enable performance optimizations (CPU affinity, lock-free queues, SIMD)
+baseline = []  # Enable local behavioral baseline engine
+jemalloc = ["dep:tikv-jemallocator"]  # Use jemalloc allocator
+auditd = []  # Enable Linux auditd collector
+linux-app-control = []  # Enable Linux AppArmor/SELinux app control backend
+# plugins = ["dep:wasmtime", "dep:wasmtime-wasi", "dep:wasi-common", "dep:cap-std"]  # Enable WASM plugin system - temporarily disabled
+plugins = []  # Temporarily disabled due to cargo manifest issue
+profiling = []  # Enable profiling infrastructure
+integration_vm = []  # Enable VM-required integration tests (kill process, quarantine, network isolation)
+# Export the deterministic behavioral RiskScore on the telemetry stream as a
+# `BehavioralRiskScore` EventPayload. OFF by default: this is fenced plumbing to
+# unblock the behavioral-sequence ML path (telemetry->label pairing). Enabling it
+# does NOT change detection behavior, only adds an emitted snapshot payload.
+export_risk_score = []
+
+[build-dependencies]
+prost-build = "0.12"
+
+[dev-dependencies]
+tempfile = "3.10"
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+mockall = "0.12"
+tokio-test = "0.4"
+proptest = "1.4"
+futures = "0.3"
+rand = "0.8"
+serial_test = "3.0"
+
+[profile.release]
+opt-level = 3
+lto = false
+codegen-units = 16
+panic = "unwind"
+strip = true
+
+# Hardened release profile - maximum security for production deployments
+[profile.release-hardened]
+inherits = "release"
+panic = "abort"              # No unwinding - smaller attack surface
+lto = "fat"                  # Full LTO for optimization and obfuscation
+codegen-units = 1            # Single codegen unit for maximum optimization
+strip = "symbols"            # Strip all symbols to reduce reverse engineering
+opt-level = "z"              # Optimize for size (less code = less attack surface)
+debug = false                # No debug info in production
+debug-assertions = false     # Disable debug assertions
+overflow-checks = true       # Catch integer overflows (security critical)
+
+# Build scripts optimized separately
+[profile.release-hardened.build-override]
+opt-level = 3
+codegen-units = 1
+
+# ARM-optimized release profile - optimizes for binary size
+[profile.release-arm]
+inherits = "release"
+opt-level = "s"  # Optimize for size on embedded ARM
+lto = "thin"     # Faster link times for ARM cross-compilation
+strip = true
+panic = "abort"  # Smaller panic handling for resource-constrained devices
+
+# Optimize all dependencies for size in ARM builds
+[profile.release-arm.package."*"]
+opt-level = "s"
+
+[[bin]]
+name = "tamandua-agent"
+path = "src/main.rs"
+
+[[bin]]
+name = "tamandua-watchdog"
+path = "src/bin/watchdog.rs"
+
+[[bench]]
+name = "collectors"
+harness = false
+
+[[bench]]
+name = "ml_streaming"
+harness = false
+required-features = ["ml"]
+
+[[bench]]
+name = "performance"
+harness = false
+required-features = ["performance"]
+
+[[bench]]
+name = "detection_benchmarks"
+harness = false
+
+# Workspace members for eBPF build tools
+[workspace]
+members = ["xtask"]
+exclude = ["ebpf-programs"]  # Built separately with different target
+
+# Reference to shared eBPF types
+[target.'cfg(target_os = "linux")'.dependencies.tamandua-ebpf-common]
+path = "ebpf-common"
+features = ["user"]

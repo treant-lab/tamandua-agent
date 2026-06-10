@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Endpoint Security Client Entitlement -->
+    <!-- Required to use the EndpointSecurity.framework APIs -->
+    <key>com.apple.developer.endpoint-security.client</key>
+    <true/>
+
+    <!-- System Extension Installation Entitlement -->
+    <!-- Required to install and run as a System Extension -->
+    <key>com.apple.developer.system-extension.install</key>
+    <true/>
+
+    <!-- Application Groups -->
+    <!-- Enables shared data between the main agent and system extension -->
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.com.tamandua.agent</string>
+    </array>
+
+    <!-- Mach Service Lookup -->
+    <!-- Allows XPC communication with the main agent -->
+    <key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
+    <array>
+        <string>com.tamandua.agent.filemonitor</string>
+        <string>com.tamandua.agent.xpc</string>
+    </array>
+
+    <!-- Hardened Runtime Exceptions -->
+    <!-- Required for proper operation within the hardened runtime environment -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <false/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <false/>
+
+    <!-- Network Access (for telemetry reporting) -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+
+    <!-- File Access (read-only for monitoring) -->
+    <key>com.apple.security.files.user-selected.read-only</key>
+    <true/>
+</dict>
+</plist>

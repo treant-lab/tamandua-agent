@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Tamandua EDR Agent - Custom UI Dialogs
+
+    This fragment defines custom UI dialogs for collecting server configuration
+    during interactive installation.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+    <?include config.wxi ?>
+
+    <Fragment>
+        <!-- Custom dialog for server configuration -->
+        <UI Id="TamanduaUI">
+            <!-- Include standard dialog set -->
+            <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+
+            <!-- Custom server configuration dialog -->
+            <Dialog Id="ServerConfigDlg" Width="370" Height="270" Title="[ProductName] Setup">
+                <!-- Dialog title -->
+                <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Transparent="yes" NoPrefix="yes">
+                    <Text>{\WixUI_Font_Title}Server Configuration</Text>
+                </Control>
+
+                <!-- Horizontal line -->
+                <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+
+                <!-- Description -->
+                <Control Id="Description" Type="Text" X="25" Y="55" Width="320" Height="30" Transparent="yes" NoPrefix="yes">
+                    <Text>Configure the connection to your Tamandua EDR server. These settings can be changed later in the configuration file.</Text>
+                </Control>
+
+                <!-- Server URL -->
+                <Control Id="ServerUrlLabel" Type="Text" X="25" Y="95" Width="100" Height="15" Transparent="yes" NoPrefix="yes">
+                    <Text>Server URL:</Text>
+                </Control>
+                <Control Id="ServerUrlEdit" Type="Edit" X="25" Y="110" Width="320" Height="18" Property="SERVER_URL">
+                    <Text>{80}</Text>
+                </Control>
+                <Control Id="ServerUrlHelp" Type="Text" X="25" Y="130" Width="320" Height="15" Transparent="yes" NoPrefix="yes">
+                    <Text>{\WixUI_Font_Smaller}Example: wss://edr.yourcompany.com/socket/agent</Text>
+                </Control>
+
+                <!-- Agent Token -->
+                <Control Id="AgentTokenLabel" Type="Text" X="25" Y="155" Width="100" Height="15" Transparent="yes" NoPrefix="yes">
+                    <Text>Agent Token:</Text>
+                </Control>
+                <Control Id="AgentTokenEdit" Type="Edit" X="25" Y="170" Width="320" Height="18" Property="AGENT_TOKEN" Password="yes">
+                    <Text>{255}</Text>
+                </Control>
+                <Control Id="AgentTokenHelp" Type="Text" X="25" Y="190" Width="320" Height="15" Transparent="yes" NoPrefix="yes">
+                    <Text>{\WixUI_Font_Smaller}Authentication token from your EDR server (optional)</Text>
+                </Control>
+
+                <!-- Bottom line -->
+                <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+
+                <!-- Navigation buttons -->
+                <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&amp;Back">
+                    <Publish Event="NewDialog" Value="InstallDirDlg">1</Publish>
+                </Control>
+                <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="&amp;Next">
+                    <Publish Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
+                </Control>
+                <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="Cancel">
+                    <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+                </Control>
+            </Dialog>
+
+            <!-- Insert our dialog into the sequence -->
+            <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="ServerConfigDlg" Order="4">1</Publish>
+            <Publish Dialog="ServerConfigDlg" Control="Back" Event="NewDialog" Value="InstallDirDlg">1</Publish>
+            <Publish Dialog="ServerConfigDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
+
+            <!-- Also modify VerifyReadyDlg back button to go to our dialog -->
+            <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="ServerConfigDlg" Order="1">NOT Installed</Publish>
+
+        </UI>
+    </Fragment>
+
+    <!-- Validation for server URL -->
+    <Fragment>
+        <Property Id="SERVER_URL_VALID" Value="0" />
+
+        <CustomAction Id="ValidateServerUrl"
+                      Script="vbscript"
+                      Execute="immediate"
+                      Return="check">
+            <![CDATA[
+                Dim serverUrl
+                serverUrl = Session.Property("SERVER_URL")
+
+                ' Basic URL validation
+                If Left(serverUrl, 5) = "wss://" Or Left(serverUrl, 4) = "ws://" Then
+                    Session.Property("SERVER_URL_VALID") = "1"
+                Else
+                    Session.Property("SERVER_URL_VALID") = "0"
+                    MsgBox "Server URL must start with wss:// or ws://", vbExclamation, "Invalid Server URL"
+                End If
+            ]]>
+        </CustomAction>
+    </Fragment>
+
+</Wix>

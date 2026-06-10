@@ -1,0 +1,18 @@
+[package]
+name = "tamandua-ebpf-common"
+version = "0.1.0"
+edition = "2021"
+description = "Common types shared between eBPF kernel programs and userspace"
+license = "Apache-2.0"
+
+[features]
+default = []
+# Enable this feature when building for userspace (with aya)
+user = ["aya"]
+
+[dependencies]
+# Only included when building for userspace loader
+aya = { version = "0.12", optional = true }
+
+[lib]
+path = "src/lib.rs"

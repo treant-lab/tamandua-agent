@@ -1,0 +1,315 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Tamandua EDR Agent - Main WiX Installer Definition
+
+    This installer:
+    - Installs the Tamandua EDR Agent as a Windows service
+    - Supports silent installation with MSI properties
+    - Handles upgrades and clean uninstallation
+    - Configures firewall rules and event logging
+
+    Usage:
+        Silent install:   msiexec /i tamandua-agent.msi /qn SERVER_URL="wss://..." AGENT_TOKEN="..."
+        Uninstall:        msiexec /x tamandua-agent.msi /qn
+        Upgrade:          msiexec /i tamandua-agent-new.msi /qn (auto-upgrades)
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:fire="http://wixtoolset.org/schemas/v4/wxs/firewall"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+    <?include config.wxi ?>
+
+    <Package Name="$(var.ProductName)"
+             Manufacturer="$(var.Manufacturer)"
+             Version="$(var.Version)"
+             UpgradeCode="$(var.UpgradeCode)"
+             Scope="perMachine"
+             Compressed="yes"
+             InstallerVersion="500">
+
+        <!-- Summary Information -->
+        <SummaryInformation Description="$(var.ProductName) $(var.Version)"
+                           Manufacturer="$(var.Manufacturer)"
+                           Keywords="EDR, Security, Agent, Endpoint Protection" />
+
+        <!-- Media / Compression -->
+        <Media Id="1" Cabinet="tamandua.cab" EmbedCab="yes" CompressionLevel="high" />
+
+        <!-- Upgrade Handling -->
+        <MajorUpgrade DowngradeErrorMessage="A newer version of $(var.ProductName) is already installed."
+                      Schedule="afterInstallInitialize"
+                      AllowSameVersionUpgrades="yes" />
+
+        <!-- Installation Prerequisites -->
+        <Launch Condition="VersionNT64" Message="$(var.ProductName) requires a 64-bit version of Windows." />
+        <Launch Condition="Privileged" Message="$(var.ProductName) requires administrator privileges to install." />
+        <Launch Condition="VersionNT &gt;= 603" Message="$(var.ProductName) requires Windows 8.1 or later." />
+
+        <!-- Public Properties (can be set from command line) -->
+        <Property Id="SERVER_URL" Value="$(var.DefaultServerUrl)" Secure="yes" />
+        <Property Id="AGENT_TOKEN" Value="" Secure="yes" Hidden="yes" />
+        <Property Id="AGENT_ID" Value="" Secure="yes" />
+        <Property Id="ORGANIZATION_ID" Value="" Secure="yes" />
+        <Property Id="INSTALL_DRIVER" Value="0" Secure="yes" />
+
+        <!-- Enrollment Properties (alternative to direct AGENT_TOKEN) -->
+        <Property Id="ENROLLMENT_URL" Value="" Secure="yes" />
+        <Property Id="ENROLLMENT_TOKEN" Value="" Secure="yes" Hidden="yes" />
+
+        <!-- mTLS Certificate Properties -->
+        <Property Id="CA_CERT_PATH" Value="" Secure="yes" />
+        <Property Id="CLIENT_CERT_PATH" Value="" Secure="yes" />
+        <Property Id="CLIENT_KEY_PATH" Value="" Secure="yes" />
+
+        <!-- Disable logging of sensitive properties -->
+        <!-- 'x' excludes verbose output, '!' disables flush to disk for performance -->
+        <Property Id="MsiLogging" Value="iwearucmopvx!" />
+
+        <!-- UI Properties -->
+        <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+        <Property Id="ARPPRODUCTICON" Value="TamanduaIcon" />
+        <Property Id="ARPHELPLINK" Value="https://tamandua.security/support" />
+        <Property Id="ARPURLINFOABOUT" Value="https://tamandua.security" />
+
+        <!-- Icon for Add/Remove Programs -->
+        <Icon Id="TamanduaIcon" SourceFile="$(var.AgentPath)\$(var.AgentExeName)" />
+
+        <!-- Directory Structure -->
+        <StandardDirectory Id="ProgramFiles64Folder">
+            <Directory Id="INSTALLFOLDER" Name="$(var.InstallDirName)">
+                <Directory Id="ConfigDir" Name="config" />
+                <Directory Id="LogsDir" Name="logs" />
+                <Directory Id="RulesDir" Name="rules">
+                    <Directory Id="YaraRulesDir" Name="yara" />
+                    <Directory Id="SigmaRulesDir" Name="sigma" />
+                </Directory>
+            </Directory>
+        </StandardDirectory>
+
+        <!-- ProgramData directory for runtime data -->
+        <StandardDirectory Id="CommonAppDataFolder">
+            <Directory Id="ProgramDataTamandua" Name="$(var.ProgramDataDir)">
+                <Directory Id="ProgramDataConfig" Name="config" />
+                <Directory Id="ProgramDataLogs" Name="logs" />
+                <Directory Id="ProgramDataRules" Name="rules">
+                    <Directory Id="ProgramDataYara" Name="yara" />
+                    <Directory Id="ProgramDataSigma" Name="sigma" />
+                </Directory>
+                <Directory Id="ProgramDataQuarantine" Name="quarantine" />
+                <Directory Id="ProgramDataCache" Name="cache" />
+                <Directory Id="ProgramDataCerts" Name="certs" />
+            </Directory>
+        </StandardDirectory>
+
+        <!-- Start Menu -->
+        <StandardDirectory Id="ProgramMenuFolder">
+            <Directory Id="TamanduaMenuFolder" Name="$(var.ProductName)" />
+        </StandardDirectory>
+
+        <!-- Main Feature -->
+        <Feature Id="MainFeature"
+                 Title="$(var.ProductName)"
+                 Description="Core EDR agent and service"
+                 Level="1"
+                 ConfigurableDirectory="INSTALLFOLDER"
+                 AllowAdvertise="no"
+                 Absent="disallow">
+
+            <ComponentGroupRef Id="AgentComponents" />
+            <ComponentGroupRef Id="ServiceComponents" />
+            <ComponentGroupRef Id="ConfigComponents" />
+            <ComponentGroupRef Id="DirectoryComponents" />
+            <ComponentRef Id="StartMenuShortcuts" />
+
+        </Feature>
+
+        <!-- Optional Driver Feature (disabled by default) -->
+        <Feature Id="DriverFeature"
+                 Title="Kernel Driver"
+                 Description="Advanced kernel-mode protection driver"
+                 Level="1000"
+                 AllowAdvertise="no">
+            <!-- Driver components would go here -->
+        </Feature>
+
+        <!-- UI Configuration -->
+        <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+
+        <!-- License Agreement -->
+        <WixVariable Id="WixUILicenseRtf" Value="License.rtf" />
+
+        <CustomAction Id="WriteConfigPS"
+                      Directory="INSTALLFOLDER"
+                      ExeCommand="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]write-config.ps1&quot; -InstallDir &quot;[INSTALLFOLDER]&quot; -ServerUrl &quot;[SERVER_URL]&quot; -AgentToken &quot;[AGENT_TOKEN]&quot; -AgentId &quot;[AGENT_ID]&quot; -OrganizationId &quot;[ORGANIZATION_ID]&quot; -EnrollmentUrl &quot;[ENROLLMENT_URL]&quot; -EnrollmentToken &quot;[ENROLLMENT_TOKEN]&quot; -CaCertPath &quot;[CA_CERT_PATH]&quot; -ClientCertPath &quot;[CLIENT_CERT_PATH]&quot; -ClientKeyPath &quot;[CLIENT_KEY_PATH]&quot;"
+                      Execute="deferred"
+                      Impersonate="no"
+                      Return="check" />
+
+        <!-- Install Sequence -->
+        <InstallExecuteSequence>
+            <Custom Action="WriteConfigPS" After="InstallFiles" Condition="NOT Installed" />
+        </InstallExecuteSequence>
+
+    </Package>
+
+    <!-- Agent Components -->
+    <Fragment>
+        <ComponentGroup Id="AgentComponents" Directory="INSTALLFOLDER">
+
+            <!-- Main Agent Executable -->
+            <Component Id="AgentExe" Guid="A1B2C3D4-E5F6-7890-ABCD-EF1234567890" Win64="yes">
+                <File Id="TamanduaAgentExe"
+                      Name="$(var.AgentExeName)"
+                      Source="$(var.AgentPath)\$(var.AgentExeName)"
+                      KeyPath="yes"
+                      Checksum="yes">
+
+                    <!-- Firewall Exception -->
+                    <fire:FirewallException Id="TamanduaFirewallException"
+                                           Name="Tamandua EDR Agent"
+                                           Description="Allow Tamandua EDR Agent to communicate with the management server"
+                                           Protocol="tcp"
+                                           Scope="any"
+                                           Profile="all"
+                                           IgnoreFailure="yes" />
+                </File>
+
+                <ServiceInstall Id="TamanduaServiceInstall"
+                               Name="$(var.ServiceName)"
+                               DisplayName="$(var.ServiceDisplayName)"
+                               Description="$(var.ServiceDescription)"
+                               Start="auto"
+                               Type="ownProcess"
+                               ErrorControl="normal"
+                               Account="LocalSystem"
+                               Arguments="--config &quot;[ProgramDataConfig]agent.toml&quot; service">
+                    <ServiceDependency Id="Tcpip" />
+                    <ServiceDependency Id="Dnscache" />
+                    <util:ServiceConfig
+                        FirstFailureActionType="restart"
+                        SecondFailureActionType="restart"
+                        ThirdFailureActionType="restart"
+                        RestartServiceDelayInSeconds="5"
+                        ResetPeriodInDays="1" />
+                </ServiceInstall>
+
+                <ServiceControl Id="TamanduaServiceControl"
+                               Name="$(var.ServiceName)"
+                               Start="install"
+                               Stop="both"
+                               Remove="uninstall"
+                               Wait="yes" />
+            </Component>
+
+        </ComponentGroup>
+    </Fragment>
+
+    <!-- Configuration Components -->
+    <Fragment>
+        <ComponentGroup Id="ConfigComponents">
+
+            <!-- Default Configuration File -->
+            <Component Id="DefaultConfig" Directory="ConfigDir" Guid="B2C3D4E5-F6A7-8901-BCDE-F23456789012" Win64="yes">
+                <File Id="DefaultConfigFile"
+                      Name="$(var.ConfigFileName)"
+                      Source="$(var.ConfigPath)\$(var.ConfigFileName)"
+                      KeyPath="yes" />
+            </Component>
+
+            <!-- PowerShell Config Writer (fallback) -->
+            <Component Id="ConfigWriter" Directory="INSTALLFOLDER" Guid="C3D4E5F6-A7B8-9012-CDEF-345678901234" Win64="yes">
+                <File Id="WriteConfigScript"
+                      Name="write-config.ps1"
+                      Source="write-config.ps1"
+                      KeyPath="yes" />
+            </Component>
+
+        </ComponentGroup>
+    </Fragment>
+
+    <!-- Directory Components (ensure directories exist) -->
+    <Fragment>
+        <ComponentGroup Id="DirectoryComponents">
+
+            <!-- ProgramData directories -->
+            <Component Id="CreateProgramDataConfig" Directory="ProgramDataConfig" Guid="D4E5F6A7-B8C9-0123-DEF0-456789012345" Win64="yes">
+                <CreateFolder>
+                    <Permission User="SYSTEM" GenericAll="yes" />
+                    <Permission User="Administrators" GenericAll="yes" />
+                </CreateFolder>
+            </Component>
+
+            <Component Id="CreateProgramDataLogs" Directory="ProgramDataLogs" Guid="E5F6A7B8-C9D0-1234-EF01-567890123456" Win64="yes">
+                <CreateFolder>
+                    <Permission User="SYSTEM" GenericAll="yes" />
+                    <Permission User="Administrators" GenericRead="yes" />
+                </CreateFolder>
+                <!-- Remove log files on uninstall -->
+                <RemoveFile Id="RemoveLogs" Name="*.log" On="uninstall" />
+            </Component>
+
+            <Component Id="CreateProgramDataYara" Directory="ProgramDataYara" Guid="F6A7B8C9-D0E1-2345-F012-678901234567" Win64="yes">
+                <CreateFolder>
+                    <Permission User="SYSTEM" GenericAll="yes" />
+                    <Permission User="Administrators" GenericAll="yes" />
+                </CreateFolder>
+            </Component>
+
+            <Component Id="CreateProgramDataSigma" Directory="ProgramDataSigma" Guid="A7B8C9D0-E1F2-3456-0123-789012345678" Win64="yes">
+                <CreateFolder>
+                    <Permission User="SYSTEM" GenericAll="yes" />
+                    <Permission User="Administrators" GenericAll="yes" />
+                </CreateFolder>
+            </Component>
+
+            <Component Id="CreateProgramDataQuarantine" Directory="ProgramDataQuarantine" Guid="B8C9D0E1-F2A3-4567-1234-890123456789" Win64="yes">
+                <CreateFolder>
+                    <Permission User="SYSTEM" GenericAll="yes" />
+                    <!-- Quarantine folder should be restricted -->
+                </CreateFolder>
+                <!-- Remove quarantined files on uninstall (optional - may want to keep) -->
+            </Component>
+
+            <Component Id="CreateProgramDataCache" Directory="ProgramDataCache" Guid="C9D0E1F2-A3B4-5678-2345-901234567890" Win64="yes">
+                <CreateFolder>
+                    <Permission User="SYSTEM" GenericAll="yes" />
+                </CreateFolder>
+                <!-- Remove cache on uninstall -->
+                <RemoveFile Id="RemoveCache" Name="*.*" On="uninstall" />
+            </Component>
+
+            <!-- mTLS Certificates directory - restricted to SYSTEM only -->
+            <Component Id="CreateProgramDataCerts" Directory="ProgramDataCerts" Guid="D0E1F2A3-B4C5-6789-3456-012345678902" Win64="yes">
+                <CreateFolder>
+                    <Permission User="SYSTEM" GenericAll="yes" />
+                    <!-- No admin access to cert directory for extra security -->
+                </CreateFolder>
+                <!-- Remove certificates on uninstall -->
+                <RemoveFile Id="RemoveCerts" Name="*.*" On="uninstall" />
+            </Component>
+
+        </ComponentGroup>
+    </Fragment>
+
+    <!-- Start Menu Shortcuts -->
+    <Fragment>
+        <Component Id="StartMenuShortcuts" Directory="TamanduaMenuFolder" Guid="D0E1F2A3-B4C5-6789-3456-012345678901" Win64="yes">
+            <Shortcut Id="UninstallShortcut"
+                      Name="Uninstall $(var.ProductName)"
+                      Description="Uninstall $(var.ProductName)"
+                      Target="[System64Folder]msiexec.exe"
+                      Arguments="/x [ProductCode]" />
+
+            <RemoveFolder Id="RemoveMenuFolder" On="uninstall" />
+
+            <RegistryValue Root="HKCU"
+                          Key="Software\$(var.Manufacturer)\$(var.ProductName)"
+                          Name="StartMenuShortcut"
+                          Type="integer"
+                          Value="1"
+                          KeyPath="yes" />
+        </Component>
+    </Fragment>
+
+</Wix>

@@ -1,0 +1,136 @@
+#!/bin/bash
+set -e
+
+TAMANDUA_USER="tamandua"
+TAMANDUA_GROUP="tamandua"
+CONFIG_DIR="/etc/tamandua"
+DATA_DIR="/var/lib/tamandua"
+LOG_DIR="/var/log/tamandua"
+RUN_DIR="/run/tamandua"
+
+create_user() {
+    # Create tamandua group if not exists
+    if ! getent group "$TAMANDUA_GROUP" > /dev/null 2>&1; then
+        groupadd --system "$TAMANDUA_GROUP"
+    fi
+
+    # Create tamandua user if not exists
+    if ! getent passwd "$TAMANDUA_USER" > /dev/null 2>&1; then
+        useradd --system \
+            --gid "$TAMANDUA_GROUP" \
+            --home-dir "$DATA_DIR" \
+            --shell /sbin/nologin \
+            --comment "Tamandua EDR Agent" \
+            "$TAMANDUA_USER"
+    fi
+}
+
+setup_directories() {
+    # Create data directory
+    mkdir -p "$DATA_DIR"
+    chown "$TAMANDUA_USER:$TAMANDUA_GROUP" "$DATA_DIR"
+    chmod 750 "$DATA_DIR"
+
+    # Create subdirectories for agent data
+    mkdir -p "$DATA_DIR/cache"
+    mkdir -p "$DATA_DIR/quarantine"
+    mkdir -p "$DATA_DIR/rules/yara"
+    mkdir -p "$DATA_DIR/rules/sigma"
+    chown -R "$TAMANDUA_USER:$TAMANDUA_GROUP" "$DATA_DIR"
+    chmod -R 750 "$DATA_DIR"
+
+    # Create log directory
+    mkdir -p "$LOG_DIR"
+    chown "$TAMANDUA_USER:$TAMANDUA_GROUP" "$LOG_DIR"
+    chmod 750 "$LOG_DIR"
+
+    # Create runtime directory
+    mkdir -p "$RUN_DIR"
+    chown "$TAMANDUA_USER:$TAMANDUA_GROUP" "$RUN_DIR"
+    chmod 755 "$RUN_DIR"
+}
+
+setup_config() {
+    # Ensure config directory exists
+    mkdir -p "$CONFIG_DIR"
+
+    # Copy example config if no config exists
+    if [ ! -f "$CONFIG_DIR/agent.toml" ]; then
+        if [ -f "$CONFIG_DIR/agent.toml.example" ]; then
+            cp "$CONFIG_DIR/agent.toml.example" "$CONFIG_DIR/agent.toml"
+        fi
+    fi
+
+    # Generate unique agent ID if not set
+    if [ -f "$CONFIG_DIR/agent.toml" ]; then
+        if grep -q 'agent_id = "550e8400-e29b-41d4-a716-446655440001"' "$CONFIG_DIR/agent.toml"; then
+            NEW_UUID=$(cat /proc/sys/kernel/random/uuid)
+            sed -i "s/agent_id = \"550e8400-e29b-41d4-a716-446655440001\"/agent_id = \"$NEW_UUID\"/" "$CONFIG_DIR/agent.toml"
+            echo "Generated new agent ID: $NEW_UUID"
+        fi
+    fi
+
+    # Set secure permissions on config
+    chown -R root:"$TAMANDUA_GROUP" "$CONFIG_DIR"
+    chmod 750 "$CONFIG_DIR"
+    chmod 640 "$CONFIG_DIR"/*.toml 2>/dev/null || true
+    chmod 640 "$CONFIG_DIR"/*.toml.example 2>/dev/null || true
+}
+
+setup_capabilities() {
+    # Set file capabilities on the binary
+    if command -v setcap > /dev/null 2>&1; then
+        setcap 'cap_net_admin,cap_net_raw,cap_sys_ptrace,cap_dac_read_search,cap_bpf,cap_perfmon,cap_sys_resource+eip' /usr/bin/tamandua-agent || true
+    fi
+}
+
+enable_service() {
+    # Reload systemd
+    if command -v systemctl > /dev/null 2>&1; then
+        systemctl daemon-reload
+
+        # Enable service
+        systemctl enable tamandua-agent.service
+
+        # Start service (only on fresh install, not upgrade)
+        if [ "$1" = "configure" ] && [ -z "$2" ]; then
+            systemctl start tamandua-agent.service || true
+        else
+            # On upgrade, restart if already running
+            if systemctl is-active --quiet tamandua-agent.service; then
+                systemctl restart tamandua-agent.service || true
+            fi
+        fi
+    fi
+}
+
+case "$1" in
+    configure)
+        create_user
+        setup_directories
+        setup_config
+        setup_capabilities
+        enable_service "$1" "$2"
+
+        echo ""
+        echo "Tamandua EDR Agent installed successfully!"
+        echo ""
+        echo "Configuration: $CONFIG_DIR/agent.toml"
+        echo "Data directory: $DATA_DIR"
+        echo "Logs: journalctl -u tamandua-agent"
+        echo ""
+        echo "To start the agent: systemctl start tamandua-agent"
+        echo "To check status: systemctl status tamandua-agent"
+        echo ""
+        ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+
+    *)
+        echo "postinst called with unknown argument '$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

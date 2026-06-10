@@ -1,0 +1,403 @@
+# Ransomware Detection Pack
+# Comprehensive rules for detecting ransomware behavior
+
+version: "1.0"
+metadata:
+  author: Tamandua Security Team
+  description: Detection rules for ransomware families and behaviors
+  last_updated: "2024-01-15"
+  references:
+    - https://attack.mitre.org/techniques/T1486/
+
+rules:
+  # ==========================================================================
+  # Ransomware Tooling
+  # ==========================================================================
+
+  - id: RANSOM-001
+    name: Known Ransomware Process Name
+    description: Detects execution of known ransomware samples
+    category: process
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [impact]
+      techniques: [T1486]
+    conditions:
+      any:
+        - process.name:
+            contains:
+              - wannacry
+              - wcry
+              - wnacry
+              - ryuk
+              - sodinokibi
+              - revil
+              - lockbit
+              - conti
+              - maze
+              - darkside
+              - blackmatter
+              - blackcat
+              - alphv
+              - hive
+              - royal
+              - play
+              - akira
+              - clop
+              - cl0p
+              - medusa
+              - ragnar
+    response:
+      - alert
+      - kill_process
+      - isolate_host
+      - notify_soc
+    tags: [ransomware, known-family]
+    confidence: 0.98
+
+  - id: RANSOM-002
+    name: Ransomware File Extension Change
+    description: Detects common ransomware file extensions
+    category: file
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [impact]
+      techniques: [T1486]
+    conditions:
+      any:
+        - file.path:
+            ends_with:
+              - .encrypted
+              - .locked
+              - .crypted
+              - .crypt
+              - .enc
+              - .locky
+              - .wcry
+              - .wncry
+              - .wnry
+              - .cerber
+              - .zepto
+              - .thor
+              - .dharma
+              - .wallet
+              - .onion
+              - .aaa
+              - .abc
+              - .xyz
+              - .xxx
+              - .ccc
+              - .vvv
+              - .ecc
+              - .exx
+              - .ezz
+              - .lockbit
+              - .ryuk
+              - .conti
+              - .maze
+              - .revil
+              - .sodinokibi
+              - .blackcat
+              - .royal
+              - .play
+              - .akira
+    response:
+      - alert
+      - notify_soc
+    tags: [ransomware, file-extension]
+    confidence: 0.90
+
+  # ==========================================================================
+  # Shadow Copy Deletion
+  # ==========================================================================
+
+  - id: RANSOM-003
+    name: Volume Shadow Copy Deletion
+    description: Detects deletion of volume shadow copies
+    category: process
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [impact]
+      techniques: [T1490]
+    conditions:
+      any:
+        - process.cmdline:
+            contains:
+              - vssadmin delete shadows
+              - vssadmin.exe delete shadows
+              - wmic shadowcopy delete
+              - "Delete Shadows /All /Quiet"
+    response:
+      - alert
+      - kill_process
+      - notify_soc
+    tags: [vss-deletion, ransomware-prep]
+    confidence: 0.95
+
+  - id: RANSOM-004
+    name: BCDEdit Boot Recovery Disable
+    description: Detects disabling of Windows recovery options
+    category: process
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [impact]
+      techniques: [T1490]
+    conditions:
+      any:
+        - process.cmdline:
+            contains:
+              - bcdedit /set {default} recoveryenabled no
+              - bcdedit /set {default} bootstatuspolicy ignoreallfailures
+    response:
+      - alert
+      - kill_process
+    tags: [bcdedit, recovery-disable]
+    confidence: 0.95
+
+  # ==========================================================================
+  # Ransomware Notes
+  # ==========================================================================
+
+  - id: RANSOM-005
+    name: Ransomware Note File Creation
+    description: Detects creation of common ransom note filenames
+    category: file
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [impact]
+      techniques: [T1486]
+    conditions:
+      any:
+        - file.name:
+            contains:
+              - README_TO_DECRYPT
+              - HOW_TO_DECRYPT
+              - DECRYPT_INSTRUCTION
+              - HELP_DECRYPT
+              - RECOVERY_INSTRUCTIONS
+              - RESTORE_FILES
+              - _readme.txt
+              - _openme.txt
+              - DECRYPT-FILES
+              - HOW-TO-DECRYPT
+              - YOUR_FILES_ARE_ENCRYPTED
+              - RECOVERY_KEY
+              - READ_ME_NOW
+              - UNLOCK_FILES
+              - !!! READ THIS !!!
+              - warning.txt
+    response:
+      - alert
+      - isolate_host
+      - notify_soc
+    tags: [ransomware-note, encryption]
+    confidence: 0.95
+
+  # ==========================================================================
+  # Mass File Operations
+  # ==========================================================================
+
+  - id: RANSOM-006
+    name: Mass File Modification - High Entropy
+    description: Detects process modifying many files with high entropy output
+    category: behavioral
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [impact]
+      techniques: [T1486]
+    conditions:
+      all:
+        - behavior.event_rate:
+            gt: 50
+        - file.entropy:
+            gt: 7.5
+    response:
+      - alert
+      - kill_process
+      - isolate_host
+    tags: [mass-encryption, high-entropy]
+    confidence: 0.85
+
+  - id: RANSOM-007
+    name: High Entropy File Write
+    description: Detects file writes with very high entropy indicating encryption
+    category: file
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [impact]
+      techniques: [T1486]
+    conditions:
+      all:
+        - file.operation:
+            eq: write
+        - file.entropy:
+            gt: 7.8
+        - file.path:
+            regex: \.(doc|docx|xls|xlsx|pdf|ppt|pptx|jpg|png|gif|zip|sql|mdb)$
+    response:
+      - alert
+    tags: [encryption, high-entropy]
+    confidence: 0.75
+
+  # ==========================================================================
+  # Backup and Recovery Tampering
+  # ==========================================================================
+
+  - id: RANSOM-008
+    name: Windows Backup Catalog Deletion
+    description: Detects deletion of Windows backup catalogs
+    category: process
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [impact]
+      techniques: [T1490]
+    conditions:
+      any:
+        - process.cmdline:
+            contains:
+              - wbadmin delete catalog
+              - wbadmin DELETE CATALOG
+    response:
+      - alert
+      - kill_process
+    tags: [backup-deletion]
+    confidence: 0.95
+
+  - id: RANSOM-009
+    name: Disable System Restore
+    description: Detects disabling of System Restore
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [impact]
+      techniques: [T1490]
+    conditions:
+      any:
+        - process.cmdline:
+            contains:
+              - Disable-ComputerRestore
+              - rstrui.exe /disable
+              - sfc /scannow
+              - "reg add.*DisableSR"
+    response:
+      - alert
+    tags: [system-restore, disable]
+    confidence: 0.85
+
+  - id: RANSOM-010
+    name: Stop Backup Services
+    description: Detects stopping of backup and recovery services
+    category: process
+    severity: high
+    enabled: true
+    mitre:
+      tactics: [impact]
+      techniques: [T1489]
+    conditions:
+      any:
+        - process.cmdline:
+            regex: (?i)sc\s+(stop|config|delete)\s+(vss|swprv|mssql|mysql|oracle|backup|veeam|acronis)
+        - process.cmdline:
+            regex: (?i)net\s+stop\s+(vss|swprv|mssql|mysql|oracle|backup|veeam|acronis)
+        - process.cmdline:
+            regex: (?i)taskkill.*(?:vss|sql|oracle|backup|veeam)
+    response:
+      - alert
+      - kill_process
+    tags: [service-stop, backup-services]
+    confidence: 0.85
+
+  # ==========================================================================
+  # Network Propagation
+  # ==========================================================================
+
+  - id: RANSOM-011
+    name: SMB Lateral Spread Indicators
+    description: Detects ransomware spreading via SMB
+    category: network
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [lateral-movement, impact]
+      techniques: [T1021.002, T1486]
+    conditions:
+      all:
+        - network.remote_port:
+            in: ["445", "139"]
+        - network.direction:
+            eq: outbound
+    response:
+      - alert
+    tags: [smb-spread, lateral-movement]
+    # Combined with other indicators
+    confidence: 0.60
+
+  # ==========================================================================
+  # Process Termination
+  # ==========================================================================
+
+  - id: RANSOM-012
+    name: Kill Security and Backup Processes
+    description: Detects termination of security and backup processes
+    category: process
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [impact, defense-evasion]
+      techniques: [T1489, T1562.001]
+    conditions:
+      all:
+        - process.name:
+            ends_with: taskkill.exe
+        - process.cmdline:
+            regex: (?i)(sql|oracle|vss|backup|veeam|acronis|defender|sophos|mcafee|symantec|norton)
+    response:
+      - alert
+      - kill_process
+    tags: [process-kill, security-bypass]
+    confidence: 0.85
+
+  # ==========================================================================
+  # Known Ransomware IOCs
+  # ==========================================================================
+
+  - id: RANSOM-013
+    name: Ransomware Command Arguments
+    description: Detects common ransomware command-line patterns
+    category: process
+    severity: critical
+    enabled: true
+    mitre:
+      tactics: [impact]
+      techniques: [T1486]
+    conditions:
+      any:
+        - process.cmdline:
+            contains:
+              - "--encrypt"
+              - "-encrypt"
+              - "--ransom"
+              - "-ransom"
+              - "--lock"
+              - "-lock"
+              - "--key"
+              - "--path-to-encrypt"
+              - "--target-drive"
+              - "--exclude"
+              - "--fast-mode"
+              - "--full-mode"
+    response:
+      - alert
+      - kill_process
+      - quarantine_file
+    tags: [ransomware-args]
+    confidence: 0.90

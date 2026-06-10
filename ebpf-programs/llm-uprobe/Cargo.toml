@@ -1,0 +1,19 @@
+[package]
+name = "llm-uprobe"
+version = "0.1.0"
+edition = "2021"
+
+# Note: This package is part of the ebpf-programs workspace
+# The actual eBPF program (src/main.rs) requires bpf-linker and rustc 1.87+
+# Structure tests validate source code without compilation
+
+[lib]
+# Empty lib.rs to avoid compilation issues - structure tests only read source files
+path = "src/lib.rs"
+
+[dependencies]
+# Dependencies for structure tests only
+# Real eBPF compilation requires aya-ebpf, aya-log-ebpf, and tamandua-ebpf-common
+
+[dev-dependencies]
+# No dependencies needed for structure validation tests

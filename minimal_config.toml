@@ -1,0 +1,14 @@
+[collectors]
+process_enabled = true
+file_enabled = false
+network_enabled = false
+dns_enabled = true
+registry_enabled = false
+firmware_enabled = false
+memory_enabled = false
+injection_enabled = false
+etw_enabled = false
+amsi_enabled = false
+lsass_enabled = false
+wmi_enabled = false
+clr_enabled = false

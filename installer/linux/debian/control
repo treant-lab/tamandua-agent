@@ -1,0 +1,25 @@
+Package: tamandua-agent
+Version: ${VERSION}
+Section: security
+Priority: optional
+Architecture: ${ARCH}
+Depends: libc6 (>= 2.17), libssl3 | libssl1.1, libgcc-s1 | libgcc1
+Recommends: systemd
+Suggests: auditd
+Conflicts: tamandua-agent-legacy
+Replaces: tamandua-agent-legacy
+Maintainer: Tamandua Security <contato@treantlab.org>
+Homepage: https://github.com/tamandua/tamandua
+Description: Tamandua EDR Agent
+ Endpoint Detection and Response agent for Linux systems.
+ Provides real-time threat monitoring, behavioral analysis,
+ and automated response capabilities.
+ .
+ Features:
+  - Process and file activity monitoring
+  - Network connection tracking
+  - DNS query logging
+  - Optional eBPF readiness reporting for advanced Linux telemetry
+  - YARA rule scanning
+  - Behavioral threat detection
+  - Automated incident response

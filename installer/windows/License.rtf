@@ -1,0 +1,65 @@
+{\rtf1\ansi\ansicpg1252\deff0\nouicompat\deflang1033{\fonttbl{\f0\fswiss\fcharset0 Arial;}{\f1\fmodern\fcharset0 Courier New;}}
+{\colortbl ;\red0\green0\blue128;}
+{\*\generator Riched20 10.0.22621}\viewkind4\uc1
+\pard\sb100\sa100\b\f0\fs28 Tamandua EDR Agent\par
+\b0\fs22 End User License Agreement\par
+\par
+\b\fs24 Apache License, Version 2.0\par
+\b0\fs22\par
+Copyright (c) 2024 Tamandua Security\par
+\par
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use this software except in compliance with the License. You may obtain a copy of the License at:\par
+\par
+\f1     http://www.apache.org/licenses/LICENSE-2.0\par
+\f0\par
+Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.\par
+\par
+\b\fs24 Terms of Use\b0\fs22\par
+\par
+By installing the Tamandua EDR Agent, you acknowledge and agree to the following:\par
+\par
+\b 1. Purpose\b0\par
+This software is an Endpoint Detection and Response (EDR) agent designed to monitor system activity, detect security threats, and protect your endpoints from malicious activity.\par
+\par
+\b 2. Data Collection\b0\par
+The agent collects telemetry data including but not limited to:\par
+\bullet  Process creation and termination events\par
+\bullet  File system activity\par
+\bullet  Network connections\par
+\bullet  Registry modifications (Windows)\par
+\bullet  System events and logs\par
+\par
+This data is transmitted to your configured EDR server for analysis.\par
+\par
+\b 3. System Access\b0\par
+The agent requires elevated privileges (SYSTEM/root) to perform security monitoring. It operates as a Windows service that starts automatically with your system.\par
+\par
+\b 4. Warranty Disclaimer\b0\par
+THIS SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND. THE AUTHORS AND COPYRIGHT HOLDERS SHALL NOT BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY ARISING FROM THE USE OF THIS SOFTWARE.\par
+\par
+\b 5. Security\b0\par
+You are responsible for:\par
+\bullet  Securing the agent token and server credentials\par
+\bullet  Configuring appropriate TLS/SSL certificates\par
+\bullet  Following security best practices for EDR deployment\par
+\par
+\b 6. Support\b0\par
+For support, documentation, and updates, please visit:\par
+\par
+\f1     https://tamandua.security\par
+\f0\par
+\par
+\b\fs24 Installation Notes\b0\fs22\par
+\par
+The installer will:\par
+\bullet  Install the Tamandua EDR Agent to Program Files\\Tamandua\par
+\bullet  Create a Windows service "TamanduaAgent"\par
+\bullet  Configure the service to start automatically\par
+\bullet  Create firewall rules for agent communication\par
+\bullet  Store configuration in C:\\ProgramData\\Tamandua\par
+\par
+\b Silent Installation:\b0\par
+\f1 msiexec /i tamandua-agent.msi /qn SERVER_URL="wss://..." AGENT_TOKEN="..."\par
+\f0\par
+By clicking "I Accept" you agree to these terms and conditions.\par
+}
