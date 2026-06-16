@@ -267,7 +267,11 @@ impl Default for ProtectionConfig {
             process_protection_enabled: true,
             critical_process_enabled: false,
             service_persistence_enabled: true,
-            service_check_interval_secs: 15,
+            // 60s (was 15s): each tick shells out to `sc query`/`sc qc`, and
+            // every `sc.exe` spawns a `conhost.exe` that the agent then ingests
+            // as its own process_create telemetry. 15s saturated low-core VMs;
+            // OS-level failure recovery already covers fast auto-restart.
+            service_check_interval_secs: 60,
             communication_protection_enabled: true,
             anti_kill_enabled: true,
             dll_injection_detection_enabled: true,
@@ -1850,29 +1854,39 @@ impl ProtectionEngine {
             }
         }
 
-        // Check SCM for recovery settings
-        let output = std::process::Command::new("sc")
-            .args(["qfailure", "TamanduaAgent"])
-            .output();
+        // Check SCM for recovery settings. Failure-recovery actions are static
+        // SCM configuration, not per-cycle state, so verify/restore them at most
+        // once per process run. Previously this ran `sc qfailure` on every tick
+        // (default 15s) and, whenever the parse missed the "restart" token,
+        // re-ran `sc failure` every tick as well. Each `sc.exe` also spawns a
+        // `conhost.exe`, and the agent ingests its own resulting process_create
+        // telemetry, so the loop became a self-inflicted process storm that
+        // saturated low-core VMs. Configure once instead.
+        static FAILURE_ACTIONS_CHECKED: std::sync::Once = std::sync::Once::new();
+        FAILURE_ACTIONS_CHECKED.call_once(|| {
+            let output = std::process::Command::new("sc")
+                .args(["qfailure", "TamanduaAgent"])
+                .output();
 
-        if let Ok(output) = output {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            // If failure actions are empty, they've been cleared
-            if !stdout.to_lowercase().contains("restart") {
-                // Re-set failure actions
-                let _ = std::process::Command::new("sc")
-                    .args([
-                        "failure",
-                        "TamanduaAgent",
-                        "reset=",
-                        "86400",
-                        "actions=",
-                        "restart/5000/restart/10000/restart/30000",
-                    ])
-                    .output();
-                debug!("Restored service failure recovery actions with exponential backoff");
+            if let Ok(output) = output {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                // If failure actions are empty, they've been cleared
+                if !stdout.to_lowercase().contains("restart") {
+                    // Re-set failure actions
+                    let _ = std::process::Command::new("sc")
+                        .args([
+                            "failure",
+                            "TamanduaAgent",
+                            "reset=",
+                            "86400",
+                            "actions=",
+                            "restart/5000/restart/10000/restart/30000",
+                        ])
+                        .output();
+                    debug!("Restored service failure recovery actions with exponential backoff");
+                }
             }
-        }
+        });
 
         events
     }

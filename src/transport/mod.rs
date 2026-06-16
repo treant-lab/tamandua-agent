@@ -484,9 +484,73 @@ impl LocalEventQueue {
         }
     }
 
-    pub fn push_batch(&mut self, events: Vec<TelemetryEvent>) {
+    /// Enqueue a batch of events with a single spool transaction and one
+    /// integrity-metadata update.
+    ///
+    /// `push` (the single-event path) issues a `SELECT COUNT(*)` plus two
+    /// autocommit writes per event, so looping it over an offline batch is
+    /// O(N^2) and pins the CPU as the queue fills. This batches eviction,
+    /// insertion, and the pending-count update so each offline batch costs a
+    /// bounded amount of work.
+    pub fn push_batch(&mut self, mut events: Vec<TelemetryEvent>) {
+        if events.is_empty() {
+            return;
+        }
+
+        // Bound the queue to `max_size` up front, dropping the oldest events
+        // (existing first, then the oldest of the incoming batch). Evicted
+        // spool rows are deleted in one transaction instead of one autocommit
+        // per drop, and incoming events trimmed before insert are never spooled.
+        let total = self.events.len() + events.len();
+        if total > self.max_size {
+            let need_drop = total - self.max_size;
+            let drop_existing = std::cmp::min(self.events.len(), need_drop);
+            if drop_existing > 0 {
+                let mut dropped_ids = Vec::with_capacity(drop_existing);
+                for _ in 0..drop_existing {
+                    if let Some(dropped) = self.events.pop_front() {
+                        dropped_ids.push(dropped.event_id);
+                    }
+                }
+                self.delete_event_ids_from_spool(&dropped_ids);
+            }
+            let drop_incoming = need_drop - drop_existing;
+            if drop_incoming > 0 {
+                events.drain(0..drop_incoming);
+            }
+            let dropped = need_drop as u64;
+            let before = self.drop_count;
+            self.drop_count += dropped;
+            // Rate-limit: log when crossing a multiple of 1000 drops.
+            if before / 1000 != self.drop_count / 1000 {
+                warn!(
+                    total_dropped = self.drop_count,
+                    queue_size = self.max_size,
+                    "Local event queue full, dropping oldest events (summary every 1000 drops)"
+                );
+            }
+        }
+
+        if events.is_empty() {
+            return;
+        }
+        let incoming = events.len();
+
+        // Persist the whole batch in a single transaction, then push into
+        // memory and update the integrity metadata once.
+        if let Err(e) = self.insert_events_into_spool(&events) {
+            warn!(error = %e, count = incoming, "Failed to persist event batch to SQLite spool");
+            self.record_integrity_event(
+                "offline_spool_write_failed",
+                format!("Failed to persist {incoming} queued telemetry event(s): {e}"),
+                serde_json::json!({"batch_size": incoming}),
+            );
+        }
         for event in events {
-            self.push(event);
+            self.events.push_back(event);
+        }
+        if let Err(e) = self.update_pending_count_meta() {
+            warn!(error = %e, "Failed to update offline spool integrity metadata");
         }
     }
 
@@ -809,6 +873,79 @@ impl LocalEventQueue {
             ) {
                 warn!(error = %e, event_id = %event_id, "Failed to delete evicted event from SQLite spool");
             }
+        }
+    }
+
+    /// Persist a batch of events to the spool in a single transaction.
+    ///
+    /// The per-event path (`insert_event_into_spool` called in a loop) issues
+    /// one autocommit transaction per event, so a high offline event rate turns
+    /// the spool into a write storm. Wrapping the batch in one transaction with
+    /// a single prepared statement collapses that to one fsync per batch while
+    /// preserving the per-payload HMAC.
+    fn insert_events_into_spool(&self, events: &[TelemetryEvent]) -> Result<()> {
+        let Some(db) = self.db.as_ref() else {
+            return Ok(());
+        };
+        let mut conn = db.lock().unwrap();
+        let queued_at = current_millis() as i64;
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                r#"
+                INSERT OR REPLACE INTO queued_events
+                    (event_id, timestamp_ms, payload, payload_hmac, queued_at_ms)
+                VALUES (?1, ?2, ?3, ?4, ?5)
+                "#,
+            )?;
+            for event in events {
+                let payload = serde_json::to_string(event)?;
+                let mac = self.hmac_hex(payload.as_bytes());
+                stmt.execute(params![
+                    event.event_id,
+                    event.timestamp as i64,
+                    payload,
+                    mac,
+                    queued_at
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Delete a batch of evicted events from the spool in a single transaction.
+    fn delete_event_ids_from_spool(&self, event_ids: &[String]) {
+        if event_ids.is_empty() {
+            return;
+        }
+        let Some(db) = self.db.as_ref() else {
+            return;
+        };
+        let mut conn = db.lock().unwrap();
+        let tx = match conn.transaction() {
+            Ok(tx) => tx,
+            Err(e) => {
+                warn!(error = %e, "Failed to open transaction to delete evicted events from spool");
+                return;
+            }
+        };
+        {
+            let mut stmt = match tx.prepare("DELETE FROM queued_events WHERE event_id = ?1") {
+                Ok(stmt) => stmt,
+                Err(e) => {
+                    warn!(error = %e, "Failed to prepare eviction delete for spool");
+                    return;
+                }
+            };
+            for event_id in event_ids {
+                if let Err(e) = stmt.execute(params![event_id]) {
+                    warn!(error = %e, event_id = %event_id, "Failed to delete evicted event from SQLite spool");
+                }
+            }
+        }
+        if let Err(e) = tx.commit() {
+            warn!(error = %e, "Failed to commit eviction deletes to spool");
         }
     }
 
@@ -3159,9 +3296,7 @@ impl BackendClient {
                 .get("offline_sync")
                 .is_some_and(|value| value == "true")
         });
-        for event in events {
-            queue.push(event.clone());
-        }
+        queue.push_batch(events.to_vec());
         debug!(
             count = events.len(),
             queue_size = queue.len(),

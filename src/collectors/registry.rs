@@ -1343,6 +1343,7 @@ impl RegistryCollector {
             t if t.starts_with("T1053") => vec!["Execution".to_string(), "Persistence".to_string()],
             t if t.starts_with("T1003") => vec!["Credential Access".to_string()],
             t if t.starts_with("T1562") => vec!["Defense Evasion".to_string()],
+            t if t.starts_with("T1112") => vec!["Defense Evasion".to_string()],
             t if t.starts_with("T1548") => vec![
                 "Defense Evasion".to_string(),
                 "Privilege Escalation".to_string(),
@@ -1458,5 +1459,33 @@ mod tests {
                 .any(|(p, _)| pattern_lower.contains(p));
             assert!(matched, "Pattern '{}' should match", pattern);
         }
+    }
+
+    #[test]
+    fn test_explorer_advanced_registry_event_maps_to_t1112() {
+        let mut monitored_keys = HashMap::new();
+        for (key, technique, description) in SECURITY_POLICY_KEYS {
+            monitored_keys.insert(key.to_lowercase(), (*technique, *description));
+        }
+
+        let event = RegistryCollector::create_registry_event(
+            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced",
+            "value_set",
+            Some("TamanduaBenchMarker"),
+            Some("tamandua"),
+            None,
+            1234,
+            "reg.exe",
+            &monitored_keys,
+        )
+        .expect("Explorer Advanced should produce registry telemetry");
+
+        assert_eq!(event.event_type, EventType::RegistrySetValue);
+        assert_eq!(event.severity, Severity::Medium);
+        assert!(event.detections.iter().any(|detection| {
+            detection.rule_name == "registry_t1112"
+                && detection.mitre_tactics == ["Defense Evasion"]
+                && detection.mitre_techniques == ["T1112"]
+        }));
     }
 }

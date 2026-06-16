@@ -538,7 +538,10 @@ int BPF_PROG(lsm_ptrace_access_check, struct task_struct *child, unsigned int mo
 
 // Mount hook for container escape detection (T1611)
 // Requires kernel >= 5.7 with BPF_LSM enabled
-// Fallback: tp/syscalls/sys_enter_mount for older kernels (documented, not implemented here)
+// Fallback: tp/syscalls/sys_enter_mount for older kernels (implemented below).
+// Both programs emit the same `struct mount_event` with EVENT_MOUNT_ESCAPE (39)
+// to the `events_priority` ring buffer so the userspace parser
+// (`parse_mount_event` in `ebpf_linux.rs`) consumes either source identically.
 SEC("lsm/sb_mount")
 int BPF_PROG(lsm_sb_mount, const char *dev_name, const struct path *path,
              const char *type, unsigned long flags, void *data, int ret)
@@ -579,6 +582,92 @@ int BPF_PROG(lsm_sb_mount, const char *dev_name, const struct path *path,
     increment_stat_events_generated();
 
     return 0; // Allow operation (detection only, not blocking)
+}
+
+// ============================================================================
+// Tracepoint fallback: tp/syscalls/sys_enter_mount
+// ============================================================================
+//
+// For kernels < 5.7 (no BPF_LSM) or kernels where CONFIG_BPF_LSM=n, the Rust
+// loader (LinuxEbpfCapabilities in ebpf_linux.rs) attaches this tracepoint
+// instead of `lsm/sb_mount`. The emitted `mount_event` payload uses the same
+// byte layout and the same EVENT_MOUNT_ESCAPE (39) discriminator, so the
+// userspace parse_mount_event is hook-agnostic.
+//
+// Trade-offs vs the LSM hook:
+//   - Fires on syscall ENTRY, so the operation has not been authorized yet
+//     (vs LSM which fires after policy decisions are made). For detection-only
+//     use this is acceptable; both hooks return 0 (do not block).
+//   - Source/target/fstype are user-space pointers at syscall entry; we read
+//     them with bpf_probe_read_user_str (Linux >= 5.5).
+//   - Does NOT see kernel-internal remounts or do_mount() calls that bypass
+//     the syscall (rare; the LSM hook covers those when available).
+//
+// Args layout matches /sys/kernel/debug/tracing/events/syscalls/sys_enter_mount/format:
+//   common_type/flags/preempt/pid : 8 bytes
+//   __syscall_nr (s32) + pad (u32): offset 8
+//   dev_name  (char __user *)     : offset 16
+//   dir_name  (char __user *)     : offset 24
+//   type      (char __user *)     : offset 32
+//   flags     (unsigned long)     : offset 40
+//   data      (void __user *)     : offset 48
+
+struct sys_enter_mount_args {
+    __u64 _common;          // common_type/flags/preempt_count/pid (8 bytes)
+    __s32 __syscall_nr;     // offset 8
+    __u32 _pad;             // offset 12 (align to 8)
+    __u64 dev_name_ptr;     // offset 16 (const char __user *)
+    __u64 dir_name_ptr;     // offset 24 (const char __user *)
+    __u64 type_ptr;         // offset 32 (const char __user *)
+    __u64 flags;            // offset 40
+    __u64 data_ptr;         // offset 48 (void __user *)
+};
+
+SEC("tracepoint/syscalls/sys_enter_mount")
+int tp_sys_enter_mount(struct sys_enter_mount_args *ctx)
+{
+    if (!is_enabled() || !container_monitoring_enabled())
+        return 0;
+
+    // Same containerized-process gate as the LSM hook
+    __u64 cgroup_id = bpf_get_current_cgroup_id();
+    if (cgroup_id == 0)
+        return 0;
+
+    struct mount_event *event;
+    event = bpf_ringbuf_reserve(&events_priority, sizeof(*event), 0);
+    if (!event) {
+        increment_stat_events_dropped();
+        return 0;
+    }
+
+    fill_header(&event->header, EVENT_MOUNT_ESCAPE);
+
+    // Zero initialize path buffers (verifier requires bounded init before write)
+    __builtin_memset(event->source, 0, sizeof(event->source));
+    __builtin_memset(event->target, 0, sizeof(event->target));
+    __builtin_memset(event->fstype, 0, sizeof(event->fstype));
+
+    // Read user-space strings. Failures leave the buffer zeroed, which the
+    // userspace parser treats as an empty string (no false positive).
+    if (ctx->dev_name_ptr) {
+        bpf_probe_read_user_str(event->source, sizeof(event->source),
+                                (const void *)ctx->dev_name_ptr);
+    }
+    if (ctx->dir_name_ptr) {
+        bpf_probe_read_user_str(event->target, sizeof(event->target),
+                                (const void *)ctx->dir_name_ptr);
+    }
+    if (ctx->type_ptr) {
+        bpf_probe_read_user_str(event->fstype, sizeof(event->fstype),
+                                (const void *)ctx->type_ptr);
+    }
+    event->flags = ctx->flags;
+
+    bpf_ringbuf_submit(event, 0);
+    increment_stat_events_generated();
+
+    return 0;
 }
 
 char LICENSE[] SEC("license") = "Apache-2.0";

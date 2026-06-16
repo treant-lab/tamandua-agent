@@ -193,6 +193,67 @@ mod connection_tests {
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].event_id, second_id);
     }
+
+    #[test]
+    fn test_local_queue_push_batch_overflow_keeps_newest() {
+        use crate::collectors::{EventPayload, EventType, ProcessEvent, Severity, TelemetryEvent};
+
+        fn make_event(pid: u32) -> TelemetryEvent {
+            TelemetryEvent::new(
+                EventType::ProcessCreate,
+                Severity::Info,
+                EventPayload::Process(ProcessEvent {
+                    pid,
+                    ppid: 1,
+                    name: format!("test{pid}"),
+                    path: "/bin/test".to_string(),
+                    cmdline: "test".to_string(),
+                    user: "root".to_string(),
+                    sha256: vec![],
+                    entropy: 5.0,
+                    is_elevated: false,
+                    parent_name: None,
+                    parent_path: None,
+                    is_signed: false,
+                    signer: None,
+                    start_time: 0,
+                    cpu_usage: 0.0,
+                    memory_bytes: 0,
+                    company_name: None,
+                    file_description: None,
+                    product_name: None,
+                    file_version: None,
+                    environment: None,
+                }),
+            )
+        }
+
+        let max_size = 5;
+        let mut queue = LocalEventQueue::new(max_size, None, b"test-integrity-key".to_vec());
+
+        // Seed two events, then push a batch that overflows capacity.
+        queue.push_batch((0..2).map(make_event).collect());
+        assert_eq!(queue.len(), 2);
+
+        let batch: Vec<_> = (2..10).map(make_event).collect();
+        let expected_last_pid = 9u32;
+        queue.push_batch(batch);
+
+        // Batched eviction must bound the queue to max_size and keep the newest.
+        assert_eq!(queue.len(), max_size);
+        let remaining = queue.peek_batch(max_size);
+        let last = remaining.last().unwrap();
+        if let EventPayload::Process(p) = &last.payload {
+            assert_eq!(p.pid, expected_last_pid);
+        } else {
+            panic!("expected process event");
+        }
+        // Oldest (pid 0) must have been evicted.
+        assert!(remaining.iter().all(|e| match &e.payload {
+            EventPayload::Process(p) => p.pid != 0,
+            _ => true,
+        }));
+    }
 }
 
 #[cfg(test)]
