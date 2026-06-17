@@ -14,9 +14,9 @@
 ///    itself was signed by a trusted authority and hasn't been tampered with)
 ///
 /// Both checks must pass before an update is installed.
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use std::path::Path;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 // ============================================================================
 // Public API

@@ -2694,14 +2694,11 @@ pub mod fanotify {
 #[cfg(target_os = "macos")]
 pub mod fsevents {
     use super::*;
-    use std::collections::HashMap;
     use std::ffi::{c_void, CStr, CString};
     use std::os::raw::c_char;
-    use std::path::PathBuf;
     use std::process::Command;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
-    use tracing::{debug, error, info, warn};
+    use tracing::info;
 
     // FSEvents event flags
     const K_FS_EVENT_STREAM_EVENT_FLAG_NONE: u32 = 0x00000000;
@@ -2904,27 +2901,20 @@ pub mod fsevents {
         ml_feature_engine: Option<Arc<LocalMLFeatureEngine>>,
     }
 
-    // Global context for the callback (FSEvents callback cannot capture closures)
-    static mut GLOBAL_CONTEXT: Option<Box<FSEventsContext>> = None;
-
-    // Global shutdown flag
-    static mut SHUTDOWN_FLAG: AtomicBool = AtomicBool::new(false);
-
     /// FSEvents callback function
     extern "C" fn fs_events_callback(
         _stream: FSEventStreamRef,
-        _context: *mut c_void,
+        context: *mut c_void,
         num_events: usize,
         event_paths: *mut c_void,
         event_flags: *const u32,
         event_ids: *const FSEventStreamEventId,
     ) {
-        let ctx = unsafe {
-            match &GLOBAL_CONTEXT {
-                Some(c) => c.as_ref(),
-                None => return,
-            }
-        };
+        if context.is_null() {
+            return;
+        }
+
+        let ctx = unsafe { &*(context as *const FSEventsContext) };
 
         let paths = event_paths as *const *const c_char;
 
@@ -3214,7 +3204,6 @@ pub mod fsevents {
             "Initializing FSEvents file monitor"
         );
 
-        // Set up global context with ML scanners
         let context = FSEventsContext {
             tx,
             config: config.clone(),
@@ -3223,11 +3212,7 @@ pub mod fsevents {
             onnx_scanner: scanner,
             ml_feature_engine: feature_engine,
         };
-
-        unsafe {
-            GLOBAL_CONTEXT = Some(Box::new(context));
-            SHUTDOWN_FLAG.store(false, Ordering::SeqCst);
-        }
+        let context_ptr = Box::into_raw(Box::new(context));
 
         // Create CFString for each path
         let mut cf_paths: Vec<CFStringRef> = Vec::new();
@@ -3243,6 +3228,9 @@ pub mod fsevents {
         }
 
         if cf_paths.is_empty() {
+            unsafe {
+                drop(Box::from_raw(context_ptr));
+            }
             return Err(anyhow::anyhow!("No valid paths to watch"));
         }
 
@@ -3261,13 +3249,16 @@ pub mod fsevents {
             for cf_path in cf_paths {
                 unsafe { CFRelease(cf_path as *const c_void) };
             }
+            unsafe {
+                drop(Box::from_raw(context_ptr));
+            }
             return Err(anyhow::anyhow!("Failed to create paths array"));
         }
 
         // Create context structure
         let mut ctx = FSEventStreamContext {
             version: 0,
-            info: std::ptr::null_mut(),
+            info: context_ptr as *mut c_void,
             retain: None,
             release: None,
             copy_description: None,
@@ -3306,6 +3297,9 @@ pub mod fsevents {
             for cf_path in cf_paths {
                 unsafe { CFRelease(cf_path as *const c_void) };
             }
+            unsafe {
+                drop(Box::from_raw(context_ptr));
+            }
             return Err(anyhow::anyhow!("Failed to create FSEventStream"));
         }
 
@@ -3335,6 +3329,9 @@ pub mod fsevents {
             for cf_path in cf_paths {
                 unsafe { CFRelease(cf_path as *const c_void) };
             }
+            unsafe {
+                drop(Box::from_raw(context_ptr));
+            }
             return Err(anyhow::anyhow!("Failed to start FSEventStream"));
         }
 
@@ -3354,6 +3351,9 @@ pub mod fsevents {
 
         for cf_path in cf_paths {
             unsafe { CFRelease(cf_path as *const c_void) };
+        }
+        unsafe {
+            drop(Box::from_raw(context_ptr));
         }
 
         Ok(())

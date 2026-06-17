@@ -61,6 +61,12 @@ mod profile_compliance_tests {
                 proc_count += 1;
             }
 
+            #[cfg(target_os = "macos")]
+            {
+                let _ = Command::new("sh").args(&["-c", "echo test"]).output();
+                proc_count += 1;
+            }
+
             thread::sleep(Duration::from_millis(100));
 
             if proc_count >= 50 {
@@ -108,6 +114,12 @@ mod profile_compliance_tests {
             let _ = fs::read_to_string(&stat_path).ok()?;
             // Simplified: just check it exists. Real impl would parse /proc/stat
             Some(0.0) // Placeholder
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let _ = pid;
+            None
         }
     }
 

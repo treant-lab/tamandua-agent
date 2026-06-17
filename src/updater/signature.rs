@@ -16,12 +16,36 @@ use tracing::{debug, error, info, warn};
 /// the `TAMANDUA_UPDATE_PUBLIC_KEY` environment variable at build time.
 const DEFAULT_PUBLIC_KEY_B64: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
-fn placeholder_key_allowed() -> bool {
+pub fn placeholder_key_allowed() -> bool {
     cfg!(debug_assertions)
         || matches!(
             std::env::var("TAMANDUA_ALLOW_INSECURE_UPDATE_KEY").as_deref(),
             Ok("1") | Ok("true") | Ok("TRUE")
         )
+}
+
+/// Return the configured update signing key, or the compiled-in default when
+/// config is empty.
+pub fn effective_public_key(configured_key: Option<&str>) -> &str {
+    configured_key
+        .filter(|k| !k.trim().is_empty())
+        .unwrap_or(DEFAULT_PUBLIC_KEY_B64)
+}
+
+/// Ensure update signing is backed by a real key before starting updater loops.
+///
+/// Debug/dev builds may opt into the placeholder for local testing, but
+/// release/prod builds fail closed until a real release-signing key is present.
+pub fn ensure_non_placeholder_key(configured_key: Option<&str>) -> Result<()> {
+    let effective_key = effective_public_key(configured_key);
+
+    if is_placeholder_key(effective_key) && !placeholder_key_allowed() {
+        bail!(
+            "update signing public key is not configured; refusing to start updater with placeholder key"
+        );
+    }
+
+    Ok(())
 }
 
 /// Check whether the given base64-encoded public key is the all-zeros
@@ -40,9 +64,7 @@ pub fn is_placeholder_key(key_b64: &str) -> bool {
 /// if no production key is configured (the placeholder all-zeros key
 /// provides zero security).
 pub fn warn_if_placeholder_key(configured_key: Option<&str>) {
-    let effective_key = configured_key
-        .filter(|k| !k.is_empty())
-        .unwrap_or(DEFAULT_PUBLIC_KEY_B64);
+    let effective_key = effective_public_key(configured_key);
 
     if is_placeholder_key(effective_key) {
         if placeholder_key_allowed() {

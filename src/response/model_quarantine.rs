@@ -759,7 +759,7 @@ impl ModelQuarantine {
     }
 
     async fn find_processes_with_file(path: &Path) -> Vec<u32> {
-        let pids = Vec::new();
+        let mut pids = Vec::new();
 
         #[cfg(target_os = "linux")]
         {

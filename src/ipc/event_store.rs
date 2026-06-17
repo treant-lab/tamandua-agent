@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::warn;
 
 use super::TelemetryEvent;

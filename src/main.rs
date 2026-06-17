@@ -3788,6 +3788,24 @@ impl Agent {
 
                                 hot_reload_collector!(process_collector, new_cc.process_enabled, "process",
                                     collectors::process::ProcessCollector::with_governor(&new_config, core_collector_governor(new_config.performance_profile)));
+                                #[cfg(target_os = "macos")]
+                                {
+                                    if !new_cc.file_enabled {
+                                        if file_collector.is_some() {
+                                            info!(collector = "file", "Hot-reload: disabling collector");
+                                        }
+                                        file_collector = None;
+                                    } else if file_collector.is_none() {
+                                        info!(collector = "file", "Hot-reload: enabling collector");
+                                        file_collector = Some(collectors::file::FileCollector::new(&new_config));
+                                    } else {
+                                        debug!(
+                                            collector = "file",
+                                            "Hot-reload: preserving macOS FSEvents collector to avoid unsafe stream restart"
+                                        );
+                                    }
+                                }
+                                #[cfg(not(target_os = "macos"))]
                                 hot_reload_collector!(file_collector, new_cc.file_enabled, "file",
                                     collectors::file::FileCollector::new(&new_config));
                                 hot_reload_collector!(network_collector, new_cc.network_enabled, "network",
@@ -3876,6 +3894,32 @@ impl Agent {
                                     collectors::firmware::FirmwareCollector::new(&new_config));
                                 hot_reload_fallible!(browser_protection_collector, new_cc.browser_protection_enabled, "browser_protection",
                                     collectors::browser_protection::BrowserProtectionCollector::new(&new_config));
+                                #[cfg(target_os = "macos")]
+                                {
+                                    if !new_cc.fim_enabled {
+                                        if fim_collector.is_some() {
+                                            info!(collector = "fim", "Hot-reload: disabling collector");
+                                        }
+                                        fim_collector = None;
+                                    } else if fim_collector.is_none() {
+                                        match collectors::fim::FimCollector::new(&new_config) {
+                                            Ok(c) => {
+                                                info!(collector = "fim", "Hot-reload: enabling collector");
+                                                fim_collector = Some(c);
+                                            }
+                                            Err(e) => {
+                                                warn!(collector = "fim", error = %e, "Hot-reload: failed to initialize");
+                                                fim_collector = None;
+                                            }
+                                        }
+                                    } else {
+                                        debug!(
+                                            collector = "fim",
+                                            "Hot-reload: preserving macOS FIM FSEvents collector to avoid unsafe watcher restart"
+                                        );
+                                    }
+                                }
+                                #[cfg(not(target_os = "macos"))]
                                 hot_reload_fallible!(fim_collector, new_cc.fim_enabled, "fim",
                                     collectors::fim::FimCollector::new(&new_config));
 

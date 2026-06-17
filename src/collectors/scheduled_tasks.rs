@@ -23,8 +23,9 @@ use crate::config::AgentConfig;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use tokio::sync::mpsc;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Scheduled task event data
 #[derive(Debug, Clone, Serialize, Deserialize)]

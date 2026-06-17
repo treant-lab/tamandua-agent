@@ -1215,7 +1215,7 @@ impl DlpCollector {
 
     /// Detect network share mount paths.
     fn detect_network_share_paths() -> Vec<PathBuf> {
-        let paths = Vec::new();
+        let mut paths = Vec::new();
 
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         {

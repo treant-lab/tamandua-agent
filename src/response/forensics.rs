@@ -1122,7 +1122,7 @@ impl ForensicCollector {
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_secs());
 
-            let entry_json = serde_json::json!({
+            let mut entry_json = serde_json::json!({
                 "path": path.to_string_lossy(),
                 "size": metadata.len(),
                 "is_dir": metadata.is_dir(),

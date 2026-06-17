@@ -18,6 +18,8 @@
 # Optional environment variables:
 #   NOTARIZE_TIMEOUT         - Timeout in minutes (default: 30)
 #   NOTARIZE_VERBOSE         - Set to "true" for verbose output
+#   NOTARIZE_REQUIRE_ENDPOINT_SECURITY
+#                            - Require EndpointSecurity entitlement (default: true)
 #
 # Example:
 #   export APPLE_ID="developer@example.com"
@@ -35,6 +37,8 @@ APP_PATH="${1:-}"
 BUNDLE_ID="${2:-}"
 TIMEOUT_MINUTES="${NOTARIZE_TIMEOUT:-30}"
 VERBOSE="${NOTARIZE_VERBOSE:-false}"
+REQUIRE_ENDPOINT_SECURITY="${NOTARIZE_REQUIRE_ENDPOINT_SECURITY:-true}"
+ENDPOINT_SECURITY_ENTITLEMENT="com.apple.developer.endpoint-security.client"
 
 # Colors for output
 RED='\033[0;31m'
@@ -72,6 +76,54 @@ cleanup() {
 }
 
 trap cleanup EXIT
+
+app_executable_path() {
+    local executable_name
+    executable_name=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "${APP_PATH}/Contents/Info.plist" 2>/dev/null || true)
+    if [[ -z "${executable_name}" ]]; then
+        log_error "Could not read CFBundleExecutable from ${APP_PATH}/Contents/Info.plist"
+        exit 1
+    fi
+    printf '%s/Contents/MacOS/%s\n' "${APP_PATH}" "${executable_name}"
+}
+
+require_endpointsecurity_entitlement() {
+    local target_path="$1"
+    local target_label="$2"
+    local entitlements
+
+    if [[ ! -e "${target_path}" ]]; then
+        log_error "${target_label} not found: ${target_path}"
+        exit 1
+    fi
+
+    entitlements=$(codesign -d --entitlements :- "${target_path}" 2>/dev/null || true)
+    if echo "${entitlements}" | grep -q "${ENDPOINT_SECURITY_ENTITLEMENT}"; then
+        log_success "${target_label} has ${ENDPOINT_SECURITY_ENTITLEMENT}"
+    else
+        log_error "${target_label} is missing ${ENDPOINT_SECURITY_ENTITLEMENT}"
+        log_error "A notarized macOS EDR bundle without this entitlement can install but will report degraded sensor health."
+        exit 1
+    fi
+}
+
+verify_endpointsecurity_entitlements() {
+    if [[ "${REQUIRE_ENDPOINT_SECURITY}" != "true" ]]; then
+        log_warning "Skipping EndpointSecurity entitlement verification"
+        return
+    fi
+
+    local executable_path
+    executable_path=$(app_executable_path)
+    require_endpointsecurity_entitlement "${executable_path}" "App executable"
+
+    local sysext_root="${APP_PATH}/Contents/Library/SystemExtensions"
+    if [[ -d "${sysext_root}" ]]; then
+        while IFS= read -r -d '' sysext_path; do
+            require_endpointsecurity_entitlement "${sysext_path}" "System Extension $(basename "${sysext_path}")"
+        done < <(find "${sysext_root}" -maxdepth 1 -type d -name '*.systemextension' -print0)
+    fi
+}
 
 usage() {
     echo "Usage: $0 <app-path> <bundle-id>"
@@ -123,6 +175,8 @@ validate_environment() {
         log_error "Please sign the app with 'codesign --sign \"Developer ID Application: ...\" --options runtime'"
         exit 1
     fi
+
+    verify_endpointsecurity_entitlements
 
     log_success "Environment validated"
 }
@@ -204,6 +258,8 @@ verify_notarization() {
     if ! xcrun stapler validate "${APP_PATH}"; then
         log_warning "Stapler validation warning (this may be normal)"
     fi
+
+    verify_endpointsecurity_entitlements
 
     log_success "Notarization verified successfully"
 }

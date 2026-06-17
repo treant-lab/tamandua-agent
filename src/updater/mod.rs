@@ -175,6 +175,7 @@ impl Updater {
             Some(update_config.signing_public_key.as_str())
         };
         signature::warn_if_placeholder_key(configured_key);
+        signature::ensure_non_placeholder_key(configured_key)?;
 
         let http_client = reqwest::Client::builder()
             .timeout(Duration::from_secs(300)) // 5 min for large downloads

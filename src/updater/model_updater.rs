@@ -157,6 +157,13 @@ impl ModelUpdater {
         check_interval_hours: u64,
         signing_public_key: &str,
     ) -> Result<Self> {
+        let configured_key = if signing_public_key.trim().is_empty() {
+            None
+        } else {
+            Some(signing_public_key)
+        };
+        super::signature::ensure_non_placeholder_key(configured_key)?;
+
         let http_client = reqwest::Client::builder()
             .timeout(Duration::from_secs(600)) // 10 min for large models
             .connect_timeout(Duration::from_secs(30))

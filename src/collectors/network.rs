@@ -14,7 +14,7 @@ use crate::config::AgentConfig;
 use crate::resource_governor::GovernorHandle;
 use std::collections::HashSet;
 use tokio::sync::mpsc;
-use tracing::{error, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 #[cfg(target_os = "windows")]
 use std::net::Ipv4Addr;

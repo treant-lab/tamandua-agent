@@ -15,10 +15,11 @@
 //! | TLS Private Key   | tls.key_path     | Platform-specific                  | mTLS client key        |
 //! | CA Certificate    | tls.ca_path      | Platform-specific                  | Server CA verification |
 
+use chrono::Datelike;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 #[cfg(target_os = "windows")]
 fn windows_data_dir() -> PathBuf {
