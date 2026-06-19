@@ -20,6 +20,8 @@
 #   NOTARIZE_VERBOSE         - Set to "true" for verbose output
 #   NOTARIZE_REQUIRE_ENDPOINT_SECURITY
 #                            - Require EndpointSecurity entitlement (default: true)
+#   NOTARIZE_REQUIRE_SYSTEM_EXTENSION
+#                            - Require a bundled .systemextension (default: true)
 #
 # Example:
 #   export APPLE_ID="developer@example.com"
@@ -38,7 +40,9 @@ BUNDLE_ID="${2:-}"
 TIMEOUT_MINUTES="${NOTARIZE_TIMEOUT:-30}"
 VERBOSE="${NOTARIZE_VERBOSE:-false}"
 REQUIRE_ENDPOINT_SECURITY="${NOTARIZE_REQUIRE_ENDPOINT_SECURITY:-true}"
+REQUIRE_SYSTEM_EXTENSION="${NOTARIZE_REQUIRE_SYSTEM_EXTENSION:-true}"
 ENDPOINT_SECURITY_ENTITLEMENT="com.apple.developer.endpoint-security.client"
+SYSTEM_EXTENSION_INSTALL_ENTITLEMENT="com.apple.developer.system-extension.install"
 
 # Colors for output
 RED='\033[0;31m'
@@ -107,6 +111,26 @@ require_endpointsecurity_entitlement() {
     fi
 }
 
+require_system_extension_install_entitlement() {
+    local target_path="$1"
+    local target_label="$2"
+    local entitlements
+
+    if [[ ! -e "${target_path}" ]]; then
+        log_error "${target_label} not found: ${target_path}"
+        exit 1
+    fi
+
+    entitlements=$(codesign -d --entitlements :- "${target_path}" 2>/dev/null || true)
+    if echo "${entitlements}" | grep -q "${SYSTEM_EXTENSION_INSTALL_ENTITLEMENT}"; then
+        log_success "${target_label} has ${SYSTEM_EXTENSION_INSTALL_ENTITLEMENT}"
+    else
+        log_error "${target_label} is missing ${SYSTEM_EXTENSION_INSTALL_ENTITLEMENT}"
+        log_error "A notarized macOS EDR bundle without this entitlement cannot install the bundled System Extension."
+        exit 1
+    fi
+}
+
 verify_endpointsecurity_entitlements() {
     if [[ "${REQUIRE_ENDPOINT_SECURITY}" != "true" ]]; then
         log_warning "Skipping EndpointSecurity entitlement verification"
@@ -116,12 +140,24 @@ verify_endpointsecurity_entitlements() {
     local executable_path
     executable_path=$(app_executable_path)
     require_endpointsecurity_entitlement "${executable_path}" "App executable"
+    require_system_extension_install_entitlement "${executable_path}" "App executable"
 
     local sysext_root="${APP_PATH}/Contents/Library/SystemExtensions"
+    local found_sysext=false
     if [[ -d "${sysext_root}" ]]; then
         while IFS= read -r -d '' sysext_path; do
+            found_sysext=true
             require_endpointsecurity_entitlement "${sysext_path}" "System Extension $(basename "${sysext_path}")"
+            require_system_extension_install_entitlement "${sysext_path}" "System Extension $(basename "${sysext_path}")"
         done < <(find "${sysext_root}" -maxdepth 1 -type d -name '*.systemextension' -print0)
+    fi
+    if [[ "${found_sysext}" != "true" ]]; then
+        if [[ "${REQUIRE_SYSTEM_EXTENSION}" == "true" ]]; then
+            log_error "No .systemextension bundle found under ${sysext_root}"
+            log_error "A release macOS EDR app without the Tamandua System Extension cannot satisfy sensor health."
+            exit 1
+        fi
+        log_warning "No .systemextension bundle found; continuing because NOTARIZE_REQUIRE_SYSTEM_EXTENSION is not true"
     fi
 }
 
@@ -254,9 +290,12 @@ verify_notarization() {
         exit 1
     fi
 
-    # Verify stapling
+    # Verify stapling. Release macOS artifacts must be locally verifiable; an
+    # unstapled ticket can leave lab installs dependent on network lookup and
+    # makes readiness failures harder to distinguish from entitlement issues.
     if ! xcrun stapler validate "${APP_PATH}"; then
-        log_warning "Stapler validation warning (this may be normal)"
+        log_error "Stapled notarization ticket validation failed"
+        exit 1
     fi
 
     verify_endpointsecurity_entitlements

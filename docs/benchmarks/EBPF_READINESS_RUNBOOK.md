@@ -1,7 +1,7 @@
 # Linux eBPF/LSM Readiness Runbook
 
 Status: operational runbook
-Last updated: 2026-06-03
+Last updated: 2026-06-18
 
 Use this runbook to validate eBPF and LSM-BPF readiness on a Linux lab host
 before deploying the Tamandua agent in collector-active mode. Do not claim a
@@ -108,8 +108,8 @@ The Python probe wraps the same detection surfaces as
 `docs/benchmarks/runs/`.
 
 ```bash
-python tools/detection_validation/run_profile.py \
-  --profile linux_ebpf_readiness_probe
+python tools/detection_validation/tamandua_detection_validation.py \
+  --profile tools/detection_validation/profiles/linux_ebpf_readiness_probe.json
 ```
 
 The profile is intended to be run on the same Linux host that will receive
@@ -122,6 +122,33 @@ The probe writes three files under `docs/benchmarks/runs/`:
 - `<timestamp>-linux-ebpf-readiness-probe.json` — raw capability snapshot
 - `<timestamp>-linux-ebpf-readiness-probe.comparison.json` — diff vs. prior
 - `<timestamp>-linux-ebpf-readiness-probe.md` — operator-facing summary
+
+## execveat / memfd Live-Kernel Proof
+
+`execveat(AT_EMPTY_PATH)` is a syscall-level fileless execution path: the
+program can be executed from a file descriptor instead of a normal pathname.
+Tamandua wires this in two places:
+
+- auditd process-create rules include `-S execveat` for broad process visibility.
+- the eBPF program handles syscall `322` (`execveat`) in
+  `sys_enter_security`, and the Rust loader attaches that program to the raw
+  tracepoint `sys_enter` so the agent can emit `fileless_execveat` evidence for
+  `memfd_create` followed by `execveat(AT_EMPTY_PATH)`.
+
+After the readiness probe is green on the target host and the agent health
+shows the raw tracepoint attached, run the dedicated live-kernel proof:
+
+```bash
+python tools/detection_validation/tamandua_detection_validation.py \
+  --profile tools/detection_validation/profiles/linux_execveat_memfd_live_kernel_proof.json \
+  --execute
+```
+
+This profile compiles a temporary helper under `/tmp`, copies `/bin/true` into
+a memfd, executes it via `execveat(AT_EMPTY_PATH)`, and then removes the
+temporary build directory. It is a lab-only proof and must not be run on the
+operator workstation. A pass requires eBPF-backed `fileless_execveat` evidence;
+auditd-only `process_create` evidence is not enough.
 
 ## Interpreting Probe Output
 
@@ -269,6 +296,10 @@ host and the probe artifact is attached to the benchmark run notes.
 - [ ] `linux_ebpf_readiness_probe` artifact recorded and probe state is
       `active` (or `degraded` with `coverage-reduced` tag and explicit
       acceptance).
+- [ ] If claiming execveat fileless execution visibility:
+      `linux_execveat_memfd_live_kernel_proof` artifact recorded and includes
+      eBPF-backed `fileless_execveat` evidence from syscall `322`; auditd-only
+      process telemetry is not sufficient.
 - [ ] If `unavailable`: escalation path chosen and benchmark lane reclassed
       to `infra-fallback` or `claim-boundary`.
 - [ ] No SELinux/AppArmor AVC denials in `dmesg` during the probe window.

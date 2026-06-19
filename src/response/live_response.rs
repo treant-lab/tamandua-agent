@@ -175,6 +175,9 @@ fn is_command_allowed(executable: &str) -> bool {
             "launchctl",
             "system_profiler",
             "scutil",
+            "codesign",
+            "spctl",
+            "systemextensionsctl",
         ];
         MACOS_ALLOW.contains(&exe)
     }
@@ -301,6 +304,75 @@ fn validate_command(command: &str) -> Result<(), String> {
                 "Only Get-Process, Get-Service, Get-NetTCPConnection are allowed via PowerShell"
                     .to_string(),
             );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if bare_lower == "systemextensionsctl" {
+            let rest = lower.splitn(2, char::is_whitespace).nth(1).unwrap_or("");
+            let sub = rest.trim().split_whitespace().next().unwrap_or("");
+            if sub != "list" {
+                return Err("Only 'systemextensionsctl list' is allowed".to_string());
+            }
+        }
+
+        if bare_lower == "spctl" {
+            let parts: Vec<&str> = lower.split_whitespace().collect();
+            const SPCTL_DENIED_FLAGS: &[&str] = &[
+                "--master-disable",
+                "--master-enable",
+                "--add",
+                "--remove",
+                "--enable",
+                "--disable",
+                "--reset-default",
+            ];
+            if parts.iter().any(|token| SPCTL_DENIED_FLAGS.contains(token)) {
+                return Err(
+                    "Only read-only spctl assessment/status commands are allowed".to_string(),
+                );
+            }
+            let read_only = parts
+                .iter()
+                .skip(1)
+                .any(|token| *token == "--assess" || *token == "-a" || *token == "--status");
+            if !read_only {
+                return Err("Only 'spctl --assess' or 'spctl --status' is allowed".to_string());
+            }
+        }
+
+        if bare_lower == "codesign" {
+            let parts: Vec<&str> = lower.split_whitespace().collect();
+            const CODESIGN_DENIED_FLAGS: &[&str] = &[
+                "--sign",
+                "-s",
+                "--force",
+                "-f",
+                "--remove-signature",
+                "--generate-entitlement-der",
+            ];
+            if parts
+                .iter()
+                .any(|token| CODESIGN_DENIED_FLAGS.contains(token))
+            {
+                return Err(
+                    "Only read-only codesign verification/display commands are allowed".to_string(),
+                );
+            }
+            let read_only = parts.iter().skip(1).any(|token| {
+                *token == "--verify"
+                    || *token == "--display"
+                    || *token == "-d"
+                    || token.starts_with("-d")
+                    || *token == "-v"
+                    || token.starts_with("-v")
+            });
+            if !read_only {
+                return Err(
+                    "Only 'codesign --verify' or 'codesign --display/-d' is allowed".to_string(),
+                );
+            }
         }
     }
 

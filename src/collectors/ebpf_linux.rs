@@ -263,6 +263,12 @@ mod inner {
         MemfdCreate = 42,
         MemfdExec = 43,
 
+        // Syscall evasion events emitted by ebpf-common EventType.
+        SyscallEvasionAnonymousMmap = 161,
+        SyscallEvasionPtraceInject = 163,
+        SyscallEvasionMemfdExec = 164,
+        SyscallEvasionProcMemWrite = 165,
+
         // Persistence
         CronModify = 50,
         SystemdTimerCreate = 51,
@@ -304,6 +310,10 @@ mod inner {
                 41 => Some(Self::MprotectChange),
                 42 => Some(Self::MemfdCreate),
                 43 => Some(Self::MemfdExec),
+                161 => Some(Self::SyscallEvasionAnonymousMmap),
+                163 => Some(Self::SyscallEvasionPtraceInject),
+                164 => Some(Self::SyscallEvasionMemfdExec),
+                165 => Some(Self::SyscallEvasionProcMemWrite),
                 50 => Some(Self::CronModify),
                 51 => Some(Self::SystemdTimerCreate),
                 52 => Some(Self::InitScriptModify),
@@ -529,6 +539,28 @@ mod inner {
         pub name: [u8; MAX_COMM_LEN],
         pub flags: u32,
         pub fd: i32,
+    }
+
+    /// Syscall evasion event emitted by the raw `sys_enter_security` program.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct BpfSyscallEvasionEvent {
+        pub header: EbpfEventHeader,
+        pub syscall_nr: u32,
+        pub evasion_type: u32,
+        pub return_addr: u64,
+        pub region_start: u64,
+        pub region_size: u64,
+        pub mem_prot: u32,
+        pub mem_flags: u32,
+        pub fd: i32,
+        pub confidence: u8,
+        pub _pad: [u8; 3],
+        pub target_pid: u32,
+        pub arg1: u64,
+        pub arg2: u64,
+        pub arg3: u64,
+        pub path: [u8; MAX_PATH_LEN],
     }
 
     /// DNS response event with answer data for correlation.
@@ -1735,7 +1767,7 @@ mod inner {
         ) -> Result<()> {
             use aya::{
                 maps::RingBuf,
-                programs::{KProbe, Lsm, TracePoint},
+                programs::{KProbe, Lsm, RawTracePoint, TracePoint},
                 Bpf, BpfLoader, Btf,
             };
 
@@ -1874,6 +1906,27 @@ mod inner {
                                     attached += 1;
                                 }
                             }
+                        }
+                    }
+                }
+            }
+
+            // ----- Raw syscall security coverage -----
+            //
+            // sched_process_exec is the canonical lifecycle signal for
+            // successful execve/execveat. This raw tracepoint preserves
+            // syscall-level context for evasive execution patterns such as
+            // memfd_create followed by execveat(AT_EMPTY_PATH).
+            if config.security_monitoring && caps.has_raw_tracepoints {
+                if let Some(program) = bpf.program_mut("sys_enter_security") {
+                    if let Ok(raw_tp) = TryInto::<&mut RawTracePoint>::try_into(program) {
+                        if raw_tp.load().is_ok() && raw_tp.attach("sys_enter").is_ok() {
+                            info!(
+                                program = "sys_enter_security",
+                                tracepoint = "sys_enter",
+                                "Attached raw tracepoint"
+                            );
+                            attached += 1;
                         }
                     }
                 }
@@ -2170,6 +2223,12 @@ mod inner {
                         BpfEventType::MemfdCreate | BpfEventType::MemfdExec => {
                             Self::parse_memfd_event(data, evt_type, &mut enricher)
                         }
+                        BpfEventType::SyscallEvasionAnonymousMmap
+                        | BpfEventType::SyscallEvasionPtraceInject
+                        | BpfEventType::SyscallEvasionMemfdExec
+                        | BpfEventType::SyscallEvasionProcMemWrite => {
+                            Self::parse_syscall_evasion_event(data, evt_type, &mut enricher)
+                        }
                         // -- Persistence --
                         BpfEventType::CronModify
                         | BpfEventType::SystemdTimerCreate
@@ -2239,7 +2298,11 @@ mod inner {
                 BpfEventType::MmapExec
                 | BpfEventType::MprotectChange
                 | BpfEventType::MemfdCreate
-                | BpfEventType::MemfdExec => EventCategory::Memory,
+                | BpfEventType::MemfdExec
+                | BpfEventType::SyscallEvasionAnonymousMmap
+                | BpfEventType::SyscallEvasionPtraceInject
+                | BpfEventType::SyscallEvasionMemfdExec
+                | BpfEventType::SyscallEvasionProcMemWrite => EventCategory::Memory,
 
                 BpfEventType::CronModify
                 | BpfEventType::SystemdTimerCreate
@@ -4435,6 +4498,116 @@ mod inner {
                 ),
                 mitre_tactics: vec!["defense-evasion".to_string(), "execution".to_string()],
                 mitre_techniques: vec!["T1620".to_string()],
+            });
+
+            Some(telemetry)
+        }
+
+        fn parse_syscall_evasion_event(
+            data: &[u8],
+            evt_type: BpfEventType,
+            enricher: &mut ProcessEnricher,
+        ) -> Option<TelemetryEvent> {
+            if data.len() < std::mem::size_of::<BpfSyscallEvasionEvent>() {
+                return None;
+            }
+            let event = unsafe { &*(data.as_ptr() as *const BpfSyscallEvasionEvent) };
+            let hdr = &event.header;
+
+            let process_name = bytes_to_string(&hdr.comm);
+            let process_path = enricher
+                .get(hdr.pid)
+                .map(|p| p.exe_path.clone())
+                .unwrap_or_default();
+            let path = bytes_to_string(&event.path);
+
+            let (operation, severity, rule_name, description, mitre_techniques) = match evt_type {
+                BpfEventType::SyscallEvasionMemfdExec => (
+                    "fileless_execveat",
+                    Severity::Critical,
+                    "fileless_execveat_ebpf",
+                    "Fileless execution via execveat syscall",
+                    vec!["T1620".to_string()],
+                ),
+                BpfEventType::SyscallEvasionPtraceInject
+                | BpfEventType::SyscallEvasionProcMemWrite => (
+                    "process_injection_syscall",
+                    Severity::Critical,
+                    "process_injection_syscall_ebpf",
+                    "Process injection syscall pattern",
+                    vec!["T1055".to_string()],
+                ),
+                BpfEventType::SyscallEvasionAnonymousMmap => (
+                    "anonymous_exec_mmap",
+                    Severity::High,
+                    "anonymous_exec_mmap_ebpf",
+                    "Anonymous executable memory mapping syscall",
+                    vec!["T1055".to_string()],
+                ),
+                _ => (
+                    "syscall_evasion",
+                    Severity::High,
+                    "syscall_evasion_ebpf",
+                    "Syscall evasion pattern",
+                    vec!["T1106".to_string()],
+                ),
+            };
+
+            let mut telemetry = TelemetryEvent::new(
+                EventType::MemoryPermissionChange,
+                severity,
+                EventPayload::MemoryPermission(MemoryPermissionEvent {
+                    pid: hdr.pid,
+                    process_name: process_name.clone(),
+                    process_path,
+                    base_address: event.region_start,
+                    region_size: event.region_size,
+                    old_protection: 0,
+                    new_protection: event.mem_prot,
+                    old_protection_str: "---".to_string(),
+                    new_protection_str: format!("{:#x}", event.mem_prot),
+                    mem_type: event.mem_flags,
+                    mem_type_str: operation.to_string(),
+                    entropy: 0.0,
+                    transition_type: operation.to_string(),
+                    thread_from_unbacked: evt_type == BpfEventType::SyscallEvasionMemfdExec,
+                    thread_id: None,
+                    thread_start_address: None,
+                }),
+            );
+
+            telemetry
+                .metadata
+                .insert("source".to_string(), "ebpf_linux_raw_syscall".to_string());
+            telemetry
+                .metadata
+                .insert("syscall_nr".to_string(), event.syscall_nr.to_string());
+            telemetry
+                .metadata
+                .insert("evasion_type".to_string(), event.evasion_type.to_string());
+            telemetry
+                .metadata
+                .insert("confidence".to_string(), event.confidence.to_string());
+            telemetry
+                .metadata
+                .insert("fd".to_string(), event.fd.to_string());
+            telemetry
+                .metadata
+                .insert("target_pid".to_string(), event.target_pid.to_string());
+            if !path.is_empty() {
+                telemetry.metadata.insert("path".to_string(), path);
+            }
+
+            telemetry.add_detection(Detection {
+                detection_type: DetectionType::MemoryThreat,
+                rule_name: rule_name.to_string(),
+                confidence: (event.confidence as f32 / 100.0).clamp(0.0, 1.0),
+                description: format!(
+                    "{}: syscall={} process={} pid={} fd={}",
+                    description, event.syscall_nr, process_name, hdr.pid, event.fd,
+                ),
+                mitre_tactics: vec!["defense-evasion".to_string(), "execution".to_string()],
+                mitre_techniques,
             });
 
             Some(telemetry)

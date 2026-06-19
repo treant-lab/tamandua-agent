@@ -1057,6 +1057,9 @@ pub const SYS_OPENAT: u32 = 257;
 pub const SYS_WRITE: u32 = 1;
 pub const SYS_PWRITE64: u32 = 18;
 
+// execveat flags
+pub const AT_EMPTY_PATH: u32 = 0x1000;
+
 // Memory protection flags
 pub const PROT_NONE: u32 = 0x0;
 pub const PROT_READ: u32 = 0x1;

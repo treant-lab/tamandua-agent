@@ -54,6 +54,10 @@ use self::cert_pinning::CertPins;
 use self::proxy::ProxyConfig;
 use self::token_manager::{extract_http_base, TokenManager, TokenManagerConfig};
 
+/// Keep telemetry frames small enough that Phoenix heartbeats and live-response
+/// control messages are not starved by inventory/replay bursts.
+pub(crate) const MAX_WEBSOCKET_TELEMETRY_BATCH: usize = 25;
+
 fn windows_tamandua_data_dir() -> std::path::PathBuf {
     #[cfg(windows)]
     {
@@ -1949,7 +1953,6 @@ impl BackendClient {
     /// to the server with a 100ms delay between batches. On failure the unsent
     /// events remain in the queue and the persisted file is updated.
     async fn flush_queue_batched(&self) {
-        const BATCH_SIZE: usize = 100;
         let delay = tokio::time::Duration::from_millis(100);
         let mut total_sent: usize = 0;
         let mut batch_num: usize = 0;
@@ -1966,7 +1969,7 @@ impl BackendClient {
                 if queue.is_empty() {
                     break;
                 }
-                queue.peek_batch(BATCH_SIZE)
+                queue.peek_batch(MAX_WEBSOCKET_TELEMETRY_BATCH)
             };
 
             if batch.is_empty() {

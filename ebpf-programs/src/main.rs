@@ -2150,8 +2150,8 @@ fn try_sys_enter_security(ctx: &RawTracePointContext) -> Result<u32, i64> {
         return Ok(0);
     }
 
-    // Read syscall number
-    let syscall_nr: u32 = unsafe { ctx.arg::<i64>(1) as u32 };
+    // raw_syscalls/sys_enter args are (struct pt_regs *regs, long id).
+    let syscall_nr = raw_tracepoint_arg_u64(ctx, 1)? as u32;
 
     // Filter to security-relevant syscalls
     match syscall_nr {
@@ -2345,8 +2345,13 @@ fn handle_memfd_create(_ctx: &RawTracePointContext) -> Result<u32, i64> {
     Ok(0)
 }
 
-fn handle_execveat_syscall(_ctx: &RawTracePointContext) -> Result<u32, i64> {
-    // execveat with AT_EMPTY_PATH is fileless execution
+fn handle_execveat_syscall(ctx: &RawTracePointContext) -> Result<u32, i64> {
+    // execveat is only fileless for this rule when AT_EMPTY_PATH executes dirfd.
+    let flags = execveat_flags(ctx)?;
+    if (flags & AT_EMPTY_PATH) == 0 {
+        return Ok(0);
+    }
+
     let mut entry = match EVENTS_PRIORITY.reserve::<SyscallEvasionEvent>(0) {
         Some(e) => e,
         None => {
@@ -2369,7 +2374,7 @@ fn handle_execveat_syscall(_ctx: &RawTracePointContext) -> Result<u32, i64> {
         (*event).mem_flags = 0;
         (*event).fd = -1;
         (*event).target_pid = 0;
-        (*event).arg1 = 0;
+        (*event).arg1 = flags as u64;
         (*event).arg2 = 0;
         (*event).arg3 = 0;
         (*event)._pad = [0; 3];
@@ -2383,6 +2388,28 @@ fn handle_execveat_syscall(_ctx: &RawTracePointContext) -> Result<u32, i64> {
     entry.submit(0);
     increment_stat(|s| &mut s.events_generated);
 
+    Ok(0)
+}
+
+fn raw_tracepoint_arg_u64(ctx: &RawTracePointContext, index: usize) -> Result<u64, i64> {
+    let args = ctx.as_ptr() as *const u64;
+    unsafe { bpf_probe_read_kernel(args.add(index)) }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn execveat_flags(ctx: &RawTracePointContext) -> Result<u32, i64> {
+    // raw_syscalls/sys_enter args are (struct pt_regs *regs, long id).
+    // execveat(dirfd, path, argv, envp, flags) passes flags in r8 on x86_64.
+    let regs = raw_tracepoint_arg_u64(ctx, 0)? as *const bindings::pt_regs;
+    if regs.is_null() {
+        return Ok(0);
+    }
+    let flags = unsafe { bpf_probe_read_kernel(core::ptr::addr_of!((*regs).r8))? };
+    Ok(flags as u32)
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn execveat_flags(_ctx: &RawTracePointContext) -> Result<u32, i64> {
     Ok(0)
 }
 

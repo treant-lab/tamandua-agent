@@ -2571,7 +2571,9 @@ impl Agent {
             // an initial full process/file inventory burst. The server may
             // still advertise a larger batch size for durable throughput, but
             // endpoint transport liveness is more important than large frames.
-            let batch_size = config.batch_size.clamp(1, 25);
+            let batch_size = config
+                .batch_size
+                .clamp(1, transport::MAX_WEBSOCKET_TELEMETRY_BATCH);
             if config.batch_size > batch_size {
                 warn!(
                     configured_batch_size = config.batch_size,
