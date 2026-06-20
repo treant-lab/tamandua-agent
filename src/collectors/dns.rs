@@ -1239,9 +1239,10 @@ impl DnsCollector {
         // Give the ETW thread a moment to start up and signal success.
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-        // Check whether the global context was initialised successfully
-        // (the ETW callback sets it before ProcessTrace returns).
-        let etw_running = dns_etw::DNS_ETW_CONTEXT.get().is_some();
+        // Check whether the ETW consumer actually opened. The callback context
+        // is a OnceLock and may be initialized before OpenTrace succeeds, so it
+        // is not a reliable health signal by itself.
+        let etw_running = dns_etw::DNS_ETW_READY.load(Ordering::Relaxed);
 
         if etw_running {
             info!("DNS ETW session active -- using real-time ETW events");
@@ -1420,6 +1421,14 @@ impl DnsCollector {
         let trace_handle = unsafe { (api.open_trace)(&mut logfile as *mut _ as *mut c_void) };
 
         if trace_handle == u64::MAX {
+            dns_etw::DNS_ETW_READY.store(false, Ordering::Relaxed);
+            if let Some(ctx) = dns_etw::DNS_ETW_CONTEXT.get() {
+                ctx.running.store(false, Ordering::Relaxed);
+                if let Ok(mut guard) = ctx.tx.lock() {
+                    *guard = None;
+                }
+            }
+
             unsafe {
                 (api.control_trace)(
                     session_handle,
@@ -1435,6 +1444,7 @@ impl DnsCollector {
             handle = trace_handle,
             "DNS ETW trace opened for consumption"
         );
+        dns_etw::DNS_ETW_READY.store(true, Ordering::Relaxed);
 
         // ---- ProcessTrace (blocking) -------------------------------------
         let handles = [trace_handle];
@@ -1455,6 +1465,7 @@ impl DnsCollector {
         }
 
         // Invalidate the global context
+        dns_etw::DNS_ETW_READY.store(false, Ordering::Relaxed);
         if let Some(ctx) = dns_etw::DNS_ETW_CONTEXT.get() {
             if let Ok(mut guard) = ctx.tx.lock() {
                 *guard = None;
@@ -3584,6 +3595,7 @@ mod dns_etw {
     // ------------------------------------------------------------------
 
     pub static DNS_ETW_CONTEXT: OnceLock<DnsEtwContext> = OnceLock::new();
+    pub static DNS_ETW_READY: AtomicBool = AtomicBool::new(false);
 
     pub struct DnsEtwContext {
         pub tx: std::sync::Mutex<Option<mpsc::Sender<TelemetryEvent>>>,

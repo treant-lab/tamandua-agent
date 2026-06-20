@@ -2292,7 +2292,11 @@ impl AgentConfig {
                     self.collectors.etw.providers.kernel_file = false;
                     self.collectors.etw.providers.kernel_network = false;
                     self.collectors.etw.providers.kernel_registry = false;
-                    self.collectors.etw.providers.dns_client = false;
+                    // DNS is low-volume and feeds the DNS monitoring, DoH/DoT
+                    // bypass, and domain correlation views. Keep it on even in
+                    // lightweight mode so endpoint DNS visibility does not go
+                    // dark while heavier ETW providers remain disabled.
+                    self.collectors.etw.providers.dns_client = true;
                     self.collectors.etw.providers.powershell = false;
                     self.collectors.etw.providers.amsi = false;
                     self.collectors.etw.providers.security_auditing = false;
@@ -2606,6 +2610,7 @@ mod performance_profile_tests {
         assert!(!config.ml_local.enabled);
         assert!(!config.offline_detection.enabled);
         assert!(!config.file_journal.enabled);
+        assert!(config.collectors.etw.providers.dns_client);
     }
 
     #[test]
