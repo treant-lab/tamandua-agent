@@ -99,10 +99,7 @@ impl FileCollector {
                     .ml_model_path
                     .as_ref()
                     .map(std::path::PathBuf::from)
-                    .unwrap_or_else(|| {
-                        // Fall back to platform default inside LocalMLFeatureEngine
-                        std::path::PathBuf::new()
-                    })
+                    .unwrap_or_else(LocalMLFeatureEngine::default_model_path)
             } else {
                 std::path::PathBuf::from(&config.ml_local.model_path)
             };

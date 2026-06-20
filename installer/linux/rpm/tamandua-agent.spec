@@ -52,6 +52,7 @@ mkdir -p %{buildroot}%{_unitdir}
 mkdir -p %{buildroot}%{_sharedstatedir}/tamandua
 mkdir -p %{buildroot}%{_sharedstatedir}/tamandua/cache
 mkdir -p %{buildroot}%{_sharedstatedir}/tamandua/quarantine
+mkdir -p %{buildroot}%{_sharedstatedir}/tamandua/models
 mkdir -p %{buildroot}%{_sharedstatedir}/tamandua/rules/yara
 mkdir -p %{buildroot}%{_sharedstatedir}/tamandua/rules/sigma
 mkdir -p %{buildroot}%{_localstatedir}/log/tamandua
@@ -65,6 +66,9 @@ install -m 0640 agent.toml.example %{buildroot}%{_sysconfdir}/tamandua/agent.tom
 
 # Install systemd service
 install -m 0644 tamandua-agent.service %{buildroot}%{_unitdir}/tamandua-agent.service
+
+# Install feature-based local ML model
+install -m 0640 malware_features.onnx %{buildroot}%{_sharedstatedir}/tamandua/models/malware_features.onnx
 
 # Install tmpfiles.d for runtime directory
 mkdir -p %{buildroot}%{_tmpfilesdir}
@@ -159,6 +163,8 @@ fi
 %dir %attr(0750,%{_tamandua_user},%{_tamandua_group}) %{_sharedstatedir}/tamandua
 %dir %attr(0750,%{_tamandua_user},%{_tamandua_group}) %{_sharedstatedir}/tamandua/cache
 %dir %attr(0750,%{_tamandua_user},%{_tamandua_group}) %{_sharedstatedir}/tamandua/quarantine
+%dir %attr(0750,%{_tamandua_user},%{_tamandua_group}) %{_sharedstatedir}/tamandua/models
+%attr(0640,%{_tamandua_user},%{_tamandua_group}) %{_sharedstatedir}/tamandua/models/malware_features.onnx
 %dir %attr(0750,%{_tamandua_user},%{_tamandua_group}) %{_sharedstatedir}/tamandua/rules
 %dir %attr(0750,%{_tamandua_user},%{_tamandua_group}) %{_sharedstatedir}/tamandua/rules/yara
 %dir %attr(0750,%{_tamandua_user},%{_tamandua_group}) %{_sharedstatedir}/tamandua/rules/sigma

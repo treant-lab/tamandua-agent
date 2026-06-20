@@ -58,6 +58,9 @@ msiexec /i tamandua-agent.msi /qn ENROLLMENT_URL="https://edr.company.com" ENROL
 
 # Build with custom server URL
 .\build.ps1 -Version "1.0.0" -ServerUrl "wss://edr.company.com/socket/agent"
+
+# Build agent with feature-based local ML enabled
+.\build.ps1 -EnableMLLocal
 ```
 
 ### Build Options
@@ -65,13 +68,20 @@ msiexec /i tamandua-agent.msi /qn ENROLLMENT_URL="https://edr.company.com" ENROL
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `-Version` | Version number | From Cargo.toml |
-| `-ServerUrl` | Default server URL | `wss://localhost:4000/socket/agent` |
+| `-ServerUrl` | Default server URL | `wss://agents.tamandua.treantlab.org:8443/socket/agent` |
 | `-OutputPath` | Output directory | `.\output` |
 | `-Configuration` | Release or Debug | Release |
 | `-SkipBuild` | Skip Rust compilation | false |
+| `-AgentFeatures` | Comma-separated Cargo features for the agent binary | empty |
+| `-EnableMLLocal` | Compile the agent with `ml-local` | false |
 | `-SignCert` | Code signing certificate (.pfx) | none |
 | `-SignPassword` | Certificate password | none |
 | `-Clean` | Clean before build | false |
+
+The MSI always stages the feature-based ONNX smoke model at
+`%ProgramData%\Tamandua\models\malware_features.onnx`. To actively use that
+model in the file collector, build the agent binary with `-EnableMLLocal` or
+`-AgentFeatures "ml-local"`.
 
 The build script validates repo-side assets and prints a post-build validation command.
 
@@ -178,6 +188,8 @@ C:\ProgramData\Tamandua\
 ├── config\
 │   └── agent.toml          # Runtime configuration used by the service
 ├── logs\                   # Runtime logs
+├── models\
+│   └── malware_features.onnx # Feature-based local ML model
 ├── rules\                  # Downloaded rules
 ├── quarantine\             # Quarantined files (SYSTEM only)
 ├── cache\                  # Temporary cache

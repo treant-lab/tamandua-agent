@@ -34,6 +34,7 @@ setup_directories() {
     # Create subdirectories for agent data
     mkdir -p "$DATA_DIR/cache"
     mkdir -p "$DATA_DIR/quarantine"
+    mkdir -p "$DATA_DIR/models"
     mkdir -p "$DATA_DIR/rules/yara"
     mkdir -p "$DATA_DIR/rules/sigma"
     chown -R "$TAMANDUA_USER:$TAMANDUA_GROUP" "$DATA_DIR"

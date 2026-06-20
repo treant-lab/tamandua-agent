@@ -201,6 +201,14 @@ prepare_files() {
     # Copy systemd service
     cp "$SCRIPT_DIR/tamandua-agent.service" "$STAGING_DIR/"
 
+    # Copy feature-based local ML model
+    if [ ! -f "$AGENT_DIR/models/malware_features.onnx" ]; then
+        log_error "Required feature ML model not found: $AGENT_DIR/models/malware_features.onnx"
+        log_error "Generate it with: python scripts/build_ml_feature_smoke_model.py"
+        exit 1
+    fi
+    cp "$AGENT_DIR/models/malware_features.onnx" "$STAGING_DIR/"
+
     # Copy license and readme if they exist
     if [ -f "$REPO_ROOT/LICENSE" ]; then
         cp "$REPO_ROOT/LICENSE" "$STAGING_DIR/"
@@ -274,6 +282,7 @@ build_deb() {
     mkdir -p "$DEB_ROOT/usr/lib/systemd/system"
     mkdir -p "$DEB_ROOT/var/lib/tamandua/cache"
     mkdir -p "$DEB_ROOT/var/lib/tamandua/quarantine"
+    mkdir -p "$DEB_ROOT/var/lib/tamandua/models"
     mkdir -p "$DEB_ROOT/var/lib/tamandua/rules/yara"
     mkdir -p "$DEB_ROOT/var/lib/tamandua/rules/sigma"
     mkdir -p "$DEB_ROOT/var/log/tamandua"
@@ -290,6 +299,10 @@ build_deb() {
     # Copy systemd service
     cp "$STAGING_DIR/tamandua-agent.service" "$DEB_ROOT/usr/lib/systemd/system/"
     chmod 644 "$DEB_ROOT/usr/lib/systemd/system/tamandua-agent.service"
+
+    # Copy feature-based local ML model
+    cp "$STAGING_DIR/malware_features.onnx" "$DEB_ROOT/var/lib/tamandua/models/"
+    chmod 640 "$DEB_ROOT/var/lib/tamandua/models/malware_features.onnx"
 
     # Copy documentation
     cp "$STAGING_DIR/LICENSE" "$DEB_ROOT/usr/share/doc/tamandua-agent/"
@@ -346,6 +359,7 @@ build_rpm() {
     cp "$STAGING_DIR/tamandua-agent" "$TARBALL_DIR/"
     cp "$STAGING_DIR/agent.toml.example" "$TARBALL_DIR/"
     cp "$STAGING_DIR/tamandua-agent.service" "$TARBALL_DIR/"
+    cp "$STAGING_DIR/malware_features.onnx" "$TARBALL_DIR/"
     cp "$STAGING_DIR/LICENSE" "$TARBALL_DIR/"
     cp "$STAGING_DIR/README.md" "$TARBALL_DIR/"
 

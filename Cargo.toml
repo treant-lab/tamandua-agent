@@ -329,6 +329,11 @@ path = "src/main.rs"
 name = "tamandua-watchdog"
 path = "src/bin/watchdog.rs"
 
+[[bin]]
+name = "ml-feature-smoke"
+path = "src/bin/ml_feature_smoke.rs"
+required-features = ["ml-local"]
+
 [[bench]]
 name = "collectors"
 harness = false

@@ -33,6 +33,10 @@
         <?define ConfigPath = "..\..\config" ?>
     <?endif?>
 
+    <?ifndef ModelPath ?>
+        <?define ModelPath = "..\..\models" ?>
+    <?endif?>
+
     <!-- Default Configuration -->
     <?ifndef DefaultServerUrl ?>
         <?define DefaultServerUrl = "wss://agents.tamandua.treantlab.org:8443/socket/agent" ?>
@@ -50,6 +54,7 @@
     <!-- File Names -->
     <?define AgentExeName = "tamandua-agent.exe" ?>
     <?define ConfigFileName = "agent.toml" ?>
+    <?define FeatureModelFileName = "malware_features.onnx" ?>
 
     <!-- Event Log -->
     <?define EventLogSource = "TamanduaAgent" ?>

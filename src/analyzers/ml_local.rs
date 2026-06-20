@@ -22,10 +22,10 @@ use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Instant;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 #[cfg(feature = "ml-local")]
-use ort::{session::Session, value::Value};
+use ort::{inputs, session::Session, session::SessionOutputs, value::Value};
 
 #[cfg(feature = "ml-local")]
 use ndarray;
@@ -158,7 +158,7 @@ pub struct LocalMLFeatureEngine {
     /// ONNX inference session. `None` if the model failed to load.
     #[cfg(feature = "ml-local")]
     #[allow(dead_code)]
-    session: Option<Session>,
+    session: Option<Mutex<Session>>,
 
     /// Placeholder when the `ml-local` feature is not compiled in.
     #[cfg(not(feature = "ml-local"))]
@@ -207,6 +207,8 @@ impl LocalMLFeatureEngine {
         }
 
         let (session, is_operational, model_version) = Self::load_session(&model_path);
+        #[cfg(feature = "ml-local")]
+        let session = session.map(Mutex::new);
 
         if is_operational {
             info!(
@@ -255,7 +257,7 @@ impl LocalMLFeatureEngine {
     }
 
     /// Platform-specific default model path.
-    fn default_model_path() -> PathBuf {
+    pub fn default_model_path() -> PathBuf {
         #[cfg(target_os = "windows")]
         {
             PathBuf::from("C:\\ProgramData\\Tamandua\\models\\malware_features.onnx")
@@ -309,8 +311,8 @@ impl LocalMLFeatureEngine {
                 let builder = match builder.with_intra_threads(1) {
                     Ok(b) => b,
                     Err(e) => {
-                        warn!(error = %e, "Failed to set intra-op threads, continuing with defaults");
-                        builder
+                        error!(error = %e, "Failed to set ONNX intra-op thread count");
+                        return (None, false, model_version);
                     }
                 };
 
@@ -518,6 +520,9 @@ impl LocalMLFeatureEngine {
             .session
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("ONNX session not initialized"))?;
+        let mut session = session
+            .lock()
+            .map_err(|_| anyhow::anyhow!("ONNX session mutex poisoned"))?;
 
         // Build a [1, FEATURE_COUNT] input tensor.
         let input_array =
@@ -525,24 +530,25 @@ impl LocalMLFeatureEngine {
                 .context("Failed to create feature tensor")?;
 
         let input_value =
-            Value::from_array(input_array.view()).context("Failed to create ONNX input value")?;
+            Value::from_array(input_array).context("Failed to create ONNX input value")?;
 
-        // Run inference. The macro `inputs!` expects string-keyed inputs.
-        let outputs = session
-            .run(ort::inputs!["input" => input_value]?)
+        let outputs: SessionOutputs = session
+            .run(inputs!["input" => input_value])
             .context("ONNX feature inference failed")?;
 
         // Extract output. Expected shape: [1, 1] or [1, 2].
         let output = outputs
-            .get("output")
-            .or_else(|| outputs.iter().next().map(|(_, v)| v))
+            .iter()
+            .find(|(name, _)| *name == "output")
+            .or_else(|| outputs.iter().next())
+            .map(|(_, value)| value)
             .ok_or_else(|| anyhow::anyhow!("No output tensor found"))?;
 
         let output_tensor = output
             .try_extract_tensor::<f32>()
             .context("Failed to extract output tensor")?;
 
-        let values: Vec<f32> = output_tensor.view().iter().copied().collect();
+        let values: Vec<f32> = output_tensor.1.iter().copied().collect();
 
         // Interpret output:
         // - If single value: sigmoid-style probability (0 = benign, 1 = malicious)

@@ -96,6 +96,7 @@
                     <Directory Id="ProgramDataYara" Name="yara" />
                     <Directory Id="ProgramDataSigma" Name="sigma" />
                 </Directory>
+                <Directory Id="ProgramDataModels" Name="models" />
                 <Directory Id="ProgramDataQuarantine" Name="quarantine" />
                 <Directory Id="ProgramDataCache" Name="cache" />
                 <Directory Id="ProgramDataCerts" Name="certs" />
@@ -119,6 +120,7 @@
             <ComponentGroupRef Id="AgentComponents" />
             <ComponentGroupRef Id="ServiceComponents" />
             <ComponentGroupRef Id="ConfigComponents" />
+            <ComponentGroupRef Id="ModelComponents" />
             <ComponentGroupRef Id="DirectoryComponents" />
             <ComponentRef Id="StartMenuShortcuts" />
 
@@ -205,6 +207,22 @@
         </ComponentGroup>
     </Fragment>
 
+    <!-- Local ML model components -->
+    <Fragment>
+        <ComponentGroup Id="ModelComponents">
+
+            <!-- Feature-based local ML ONNX model -->
+            <Component Id="FeatureMLModel" Directory="ProgramDataModels" Guid="6F789012-3456-789A-BCDE-F01234567890" Win64="yes">
+                <File Id="FeatureMLModelFile"
+                      Name="$(var.FeatureModelFileName)"
+                      Source="$(var.ModelPath)\$(var.FeatureModelFileName)"
+                      KeyPath="yes"
+                      Checksum="yes" />
+            </Component>
+
+        </ComponentGroup>
+    </Fragment>
+
     <!-- Configuration Components -->
     <Fragment>
         <ComponentGroup Id="ConfigComponents">
@@ -260,6 +278,13 @@
                 <CreateFolder>
                     <Permission User="SYSTEM" GenericAll="yes" />
                     <Permission User="Administrators" GenericAll="yes" />
+                </CreateFolder>
+            </Component>
+
+            <Component Id="CreateProgramDataModels" Directory="ProgramDataModels" Guid="E1F2A3B4-C5D6-7890-4567-1234567890AB" Win64="yes">
+                <CreateFolder>
+                    <Permission User="SYSTEM" GenericAll="yes" />
+                    <Permission User="Administrators" GenericRead="yes" />
                 </CreateFolder>
             </Component>
 

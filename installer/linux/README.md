@@ -17,6 +17,9 @@ This directory contains scripts and configuration for building DEB and RPM packa
 
 # Build for ARM64
 ./build.sh --arch arm64
+
+# Build with feature-based local ML enabled
+./build.sh --features compression,ml-local
 ```
 
 ## Prerequisites
@@ -205,7 +208,12 @@ After installation:
 | `/etc/tamandua/agent.toml` | Configuration file |
 | `/usr/lib/systemd/system/tamandua-agent.service` | Systemd service |
 | `/var/lib/tamandua/` | Agent data directory |
+| `/var/lib/tamandua/models/malware_features.onnx` | Feature-based local ML model |
 | `/var/log/tamandua/` | Log directory (journald is primary) |
+
+The package stages the feature-based ONNX smoke model by default. To actively
+use it in the file collector, build the agent binary with `--features
+compression,ml-local`.
 
 ## Security Features
 

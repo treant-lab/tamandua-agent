@@ -91,6 +91,8 @@ Assert-Path (Join-Path $repoScriptDir "Product.wxs") "Product.wxs"
 Assert-Path (Join-Path $repoScriptDir "Service.wxs") "Service.wxs"
 Assert-Path (Join-Path $repoScriptDir "write-config.ps1") "write-config.ps1"
 Assert-Path (Join-Path $repoScriptDir "License.rtf") "License.rtf"
+$agentRoot = (Resolve-Path (Join-Path $repoScriptDir "..\..")).Path
+Assert-Path (Join-Path $agentRoot "models\malware_features.onnx") "Feature ML model asset"
 
 $wix = Get-Command "wix" -ErrorAction SilentlyContinue
 if ($wix) {
@@ -117,6 +119,7 @@ Assert-Path $installConfig "Installed config seed"
 Assert-Path $runtimeConfig "Runtime config"
 Assert-Path (Join-Path $ProgramDataDir "logs") "ProgramData logs"
 Assert-Path (Join-Path $ProgramDataDir "rules") "ProgramData rules"
+Assert-Path (Join-Path $ProgramDataDir "models\malware_features.onnx") "ProgramData feature ML model"
 Assert-Path (Join-Path $ProgramDataDir "quarantine") "ProgramData quarantine"
 
 try {

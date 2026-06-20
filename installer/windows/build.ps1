@@ -37,6 +37,12 @@
 .PARAMETER WixPath
     Custom path to WiX toolset (default: searches PATH)
 
+.PARAMETER AgentFeatures
+    Optional comma-separated Cargo features for the agent binary.
+
+.PARAMETER EnableMLLocal
+    Build the agent with the `ml-local` feature enabled.
+
 .EXAMPLE
     .\build.ps1 -Version "1.0.0" -ServerUrl "wss://edr.company.com/socket/agent"
 
@@ -79,6 +85,12 @@ param(
 
     [Parameter()]
     [string]$WixPath,
+
+    [Parameter()]
+    [string]$AgentFeatures = "",
+
+    [Parameter()]
+    [switch]$EnableMLLocal,
 
     [Parameter()]
     [switch]$Clean,
@@ -258,6 +270,17 @@ function Build-Installer {
                 $cargoArgs += "--release"
             }
 
+            $features = @()
+            if ($AgentFeatures.Trim().Length -gt 0) {
+                $features += $AgentFeatures.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_.Length -gt 0 }
+            }
+            if ($EnableMLLocal -and -not ($features -contains "ml-local")) {
+                $features += "ml-local"
+            }
+            if ($features.Count -gt 0) {
+                $cargoArgs += @("--features", ($features -join ","))
+            }
+
             Write-Info "Running: cargo $($cargoArgs -join ' ')"
             & cargo $cargoArgs
 
@@ -290,6 +313,14 @@ function Build-Installer {
         exit 1
     }
     Write-Success "Found write-config.ps1"
+
+    $featureModelPath = Join-Path $AgentRoot "models\malware_features.onnx"
+    if (-not (Test-Path $featureModelPath)) {
+        Write-Error "Required feature ML model not found: $featureModelPath"
+        Write-Info "Generate it with: python scripts\build_ml_feature_smoke_model.py"
+        exit 1
+    }
+    Write-Success "Found malware_features.onnx"
 
     # Create License.rtf if it doesn't exist
     $licensePath = Join-Path $InstallerDir "License.rtf"
@@ -340,6 +371,7 @@ limitations under the License.\par
         "-d", "DefaultServerUrl=$ServerUrl",
         "-d", "AgentPath=$AgentRoot\target\$configLower",
         "-d", "ConfigPath=$AgentRoot\config",
+        "-d", "ModelPath=$AgentRoot\models",
         "-ext", "WixToolset.UI.wixext",
         "-ext", "WixToolset.Util.wixext",
         "-ext", "WixToolset.Firewall.wixext",
