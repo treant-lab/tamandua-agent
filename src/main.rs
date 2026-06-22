@@ -4442,7 +4442,16 @@ impl Agent {
 
                             // Create a detection event to send to backend
                             // Using ResponseAction as a generic event type for ML detections
-                            let detection_event = collectors::TelemetryEvent::new(
+                            let classification = result
+                                .classification
+                                .clone()
+                                .unwrap_or_else(|| "unknown_malware".to_string());
+                            let description = format!(
+                                "Agent ML classified {} as malicious with {:.2} confidence",
+                                result.file_path, result.confidence
+                            );
+
+                            let mut detection_event = collectors::TelemetryEvent::new(
                                 collectors::EventType::RansomwareDetected,
                                 if result.confidence >= 0.9 {
                                     collectors::Severity::Critical
@@ -4456,12 +4465,26 @@ impl Agent {
                                     "sha256": result.sha256,
                                     "file_path": result.file_path,
                                     "confidence": result.confidence,
-                                    "classification": result.classification,
+                                    "classification": classification,
                                     "mitre_tactics": result.mitre_tactics,
                                     "mitre_techniques": result.mitre_techniques,
                                     "details": result.details,
                                 })),
                             );
+                            detection_event
+                                .metadata
+                                .insert("source".to_string(), "ml_analysis".to_string());
+                            detection_event
+                                .metadata
+                                .insert("provider".to_string(), "tamandua_agent".to_string());
+                            detection_event.add_detection(collectors::Detection {
+                                detection_type: collectors::DetectionType::Ml,
+                                rule_name: "agent_ml_malware_classification".to_string(),
+                                confidence: result.confidence,
+                                description,
+                                mitre_tactics: result.mitre_tactics.clone(),
+                                mitre_techniques: result.mitre_techniques.clone(),
+                            });
 
                             if let Err(e) = client.send_telemetry(&[detection_event]).await {
                                 error!(error = %e, "Failed to send ML detection event");
