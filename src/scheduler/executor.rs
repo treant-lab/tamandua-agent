@@ -1,17 +1,19 @@
 //! Schedule execution engine
 
 use super::schedule::{
-    CpuPriority, DetectionAction, Schedule, ScheduleId, ScheduleScanType, ScanOptions,
+    CpuPriority, DetectionAction, ScanOptions, Schedule, ScheduleId, ScheduleScanType,
 };
 use super::RunningSchedule;
+use crate::analyzers::ml_local::LocalMLFeatureEngine;
+use crate::config::AgentConfig;
 use anyhow::Result;
 use chrono::Utc;
 use parking_lot::RwLock;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 use walkdir::WalkDir;
 
 /// Result of a schedule execution
@@ -26,6 +28,13 @@ pub struct ExecutionResult {
 pub struct ScheduleExecutor {
     /// Cancellation tokens for running scans
     cancel_tokens: Arc<RwLock<HashMap<ScheduleId, mpsc::Sender<()>>>>,
+    /// ONNX image-based malware scanner used for scheduled scans.
+    #[cfg(feature = "onnx")]
+    onnx_scanner: Option<Arc<crate::analyzers::onnx_scanner::OnnxScanner>>,
+    /// Feature-based local ML engine used for scheduled scans.
+    ml_feature_engine: Option<Arc<LocalMLFeatureEngine>>,
+    /// Maximum file size for feature-based ML scheduled scans.
+    ml_feature_max_file_size_bytes: u64,
 }
 
 impl ScheduleExecutor {
@@ -33,7 +42,42 @@ impl ScheduleExecutor {
     pub fn new() -> Self {
         Self {
             cancel_tokens: Arc::new(RwLock::new(HashMap::new())),
+            #[cfg(feature = "onnx")]
+            onnx_scanner: None,
+            ml_feature_engine: None,
+            ml_feature_max_file_size_bytes: 0,
         }
+    }
+
+    /// Create a scheduler executor wired to the configured agent ML engines.
+    pub fn from_config(config: &AgentConfig) -> Self {
+        let mut executor = Self::new();
+
+        #[cfg(feature = "onnx")]
+        if config.ml_scanning_enabled && !config.collector_tuning.skip_expensive_analysis {
+            let mut scanner_config = crate::analyzers::onnx_scanner::OnnxScannerConfig {
+                confidence_threshold: config.ml_confidence_threshold.unwrap_or(0.7),
+                inference_timeout_secs: config.ml_inference_timeout_secs,
+                ..Default::default()
+            };
+            if let Some(model_path) = &config.ml_model_path {
+                scanner_config.model_path = PathBuf::from(model_path);
+            }
+            executor.onnx_scanner = Some(Arc::new(
+                crate::analyzers::onnx_scanner::OnnxScanner::new(scanner_config),
+            ));
+        }
+
+        if config.ml_local.enabled {
+            let engine = LocalMLFeatureEngine::from_config(config);
+            if engine.is_operational() {
+                executor.ml_feature_engine = Some(Arc::new(engine));
+                executor.ml_feature_max_file_size_bytes =
+                    config.ml_local.max_file_size_mb * 1024 * 1024;
+            }
+        }
+
+        executor
     }
 
     /// Execute a scheduled scan
@@ -55,14 +99,17 @@ impl ScheduleExecutor {
         // Set up running status
         {
             let mut running_guard = running.write();
-            running_guard.insert(schedule.id, RunningSchedule {
-                schedule_id: schedule.id,
-                started_at: start_time,
-                files_scanned: 0,
-                total_files: 0,
-                threats_found: 0,
-                current_path: String::new(),
-            });
+            running_guard.insert(
+                schedule.id,
+                RunningSchedule {
+                    schedule_id: schedule.id,
+                    started_at: start_time,
+                    files_scanned: 0,
+                    total_files: 0,
+                    threats_found: 0,
+                    current_path: String::new(),
+                },
+            );
         }
 
         // Set process priority
@@ -76,7 +123,8 @@ impl ScheduleExecutor {
         let mut threats_found: u32 = 0;
 
         // Collect all files first
-        let files: Vec<PathBuf> = paths.iter()
+        let files: Vec<PathBuf> = paths
+            .iter()
             .flat_map(|p| self.collect_files(p, &schedule.config.options))
             .collect();
 
@@ -119,7 +167,8 @@ impl ScheduleExecutor {
                             &file_path,
                             &result,
                             &schedule.config.detection_action,
-                        ).await;
+                        )
+                        .await;
                     }
                 }
                 Err(e) => {
@@ -297,9 +346,13 @@ impl ScheduleExecutor {
     fn should_skip_entry(&self, entry: &walkdir::DirEntry) -> bool {
         // Skip hidden system directories
         let skip_dirs = [
-            ".git", ".svn", ".hg",
-            "node_modules", "__pycache__",
-            "$Recycle.Bin", "System Volume Information",
+            ".git",
+            ".svn",
+            ".hg",
+            "node_modules",
+            "__pycache__",
+            "$Recycle.Bin",
+            "System Volume Information",
         ];
 
         if let Some(name) = entry.file_name().to_str() {
@@ -378,7 +431,11 @@ impl ScheduleExecutor {
     }
 
     /// Scan with YARA rules
-    async fn scan_with_yara(&self, _contents: &[u8], _path: &PathBuf) -> Result<Option<ScanFileResult>> {
+    async fn scan_with_yara(
+        &self,
+        _contents: &[u8],
+        _path: &PathBuf,
+    ) -> Result<Option<ScanFileResult>> {
         // STUB — PRODUCTION-GAP, not production. Always returns None (no detection).
         // Reached by the scheduled-scan loop via scan_file(); YARA scanning is silently
         // disabled here even though a real YARA engine exists elsewhere in the agent.
@@ -387,10 +444,52 @@ impl ScheduleExecutor {
     }
 
     /// Scan with ML model
-    async fn scan_with_ml(&self, _contents: &[u8], _path: &PathBuf) -> Result<Option<ScanFileResult>> {
-        // STUB — PRODUCTION-GAP, not production. Always returns None (no detection).
-        // Reached by the scheduled-scan loop via scan_file(); ML classification is
-        // silently disabled here. Missing: wiring to the ML inference path / service.
+    async fn scan_with_ml(
+        &self,
+        contents: &[u8],
+        path: &PathBuf,
+    ) -> Result<Option<ScanFileResult>> {
+        #[cfg(feature = "onnx")]
+        if let Some(scanner) = &self.onnx_scanner {
+            if crate::analyzers::onnx_scanner::is_executable_file(path, Some(contents)) {
+                let result = scanner.scan_file(path).await?;
+                if result.is_malicious {
+                    let family = result
+                        .family
+                        .clone()
+                        .unwrap_or_else(|| "unknown_malware".to_string());
+                    return Ok(Some(ScanFileResult {
+                        is_threat: true,
+                        threat_name: format!("ONNX ML malware: {family}"),
+                        severity: severity_for_confidence(result.confidence),
+                        detection_method: "ml_onnx".to_string(),
+                    }));
+                }
+            }
+        }
+
+        if let Some(engine) = &self.ml_feature_engine {
+            if self.ml_feature_max_file_size_bytes > 0 {
+                if let Ok(meta) = std::fs::metadata(path) {
+                    if meta.len() > self.ml_feature_max_file_size_bytes {
+                        return Ok(None);
+                    }
+                }
+            }
+
+            if is_pe_file(contents) {
+                let classification = engine.classify_file(path)?;
+                if classification.is_malicious {
+                    return Ok(Some(ScanFileResult {
+                        is_threat: true,
+                        threat_name: "Feature ML malware".to_string(),
+                        severity: severity_for_confidence(classification.confidence),
+                        detection_method: "ml_features".to_string(),
+                    }));
+                }
+            }
+        }
+
         Ok(None)
     }
 
@@ -405,7 +504,11 @@ impl ScheduleExecutor {
     }
 
     /// Scan archive contents
-    async fn scan_archive(&self, _path: &PathBuf, _options: &ScanOptions) -> Result<Option<ScanFileResult>> {
+    async fn scan_archive(
+        &self,
+        _path: &PathBuf,
+        _options: &ScanOptions,
+    ) -> Result<Option<ScanFileResult>> {
         // STUB — PRODUCTION-GAP, not production. Always returns None.
         // Even when ScanOptions.scan_archives is enabled, archive members are never
         // unpacked or scanned. Missing: archive extraction + recursive member scanning.
@@ -433,7 +536,10 @@ impl ScheduleExecutor {
                     error!("Failed to quarantine {:?}: {}", path, e);
                 }
             }
-            DetectionAction::Custom { action_name, params } => {
+            DetectionAction::Custom {
+                action_name,
+                params,
+            } => {
                 info!(
                     "Executing custom action '{}' with params: {:?}",
                     action_name, params
@@ -455,7 +561,8 @@ impl ScheduleExecutor {
         tokio::fs::create_dir_all(&quarantine_dir).await?;
 
         // Generate unique quarantine name
-        let file_name = path.file_name()
+        let file_name = path
+            .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "unknown".to_string());
         let quarantine_name = format!("{}_{}", uuid::Uuid::new_v4(), file_name);
@@ -473,8 +580,8 @@ impl ScheduleExecutor {
         #[cfg(target_os = "windows")]
         {
             use windows::Win32::System::Threading::{
-                GetCurrentProcess, SetPriorityClass,
-                BELOW_NORMAL_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS, ABOVE_NORMAL_PRIORITY_CLASS,
+                GetCurrentProcess, SetPriorityClass, ABOVE_NORMAL_PRIORITY_CLASS,
+                BELOW_NORMAL_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS,
             };
 
             unsafe {
@@ -526,6 +633,20 @@ fn sha256_hash(data: &[u8]) -> String {
     hex::encode(hasher.finalize())
 }
 
+fn is_pe_file(data: &[u8]) -> bool {
+    data.len() >= 2 && data[0] == 0x4D && data[1] == 0x5A
+}
+
+fn severity_for_confidence(confidence: f32) -> String {
+    if confidence >= 0.9 {
+        "critical".to_string()
+    } else if confidence >= 0.7 {
+        "high".to_string()
+    } else {
+        "medium".to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -543,5 +664,14 @@ mod tests {
         assert!(executor.is_archive(&PathBuf::from("test.tar.gz")));
         assert!(!executor.is_archive(&PathBuf::from("test.exe")));
         assert!(!executor.is_archive(&PathBuf::from("test.txt")));
+    }
+
+    #[test]
+    fn test_ml_helpers() {
+        assert!(is_pe_file(b"MZfixture"));
+        assert!(!is_pe_file(b"fixture"));
+        assert_eq!(severity_for_confidence(0.95), "critical");
+        assert_eq!(severity_for_confidence(0.75), "high");
+        assert_eq!(severity_for_confidence(0.55), "medium");
     }
 }

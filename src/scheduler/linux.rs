@@ -90,7 +90,11 @@ WantedBy=timers.target
 "#,
         schedule.name,
         format_systemd_oncalendar(&schedule.config.frequency),
-        if schedule.config.options.wake_to_scan { "WakeSystem=true" } else { "" }
+        if schedule.config.options.wake_to_scan {
+            "WakeSystem=true"
+        } else {
+            ""
+        }
     );
 
     let timer_path = systemd_dir.join(format!("{}.timer", unit_name));
@@ -164,7 +168,8 @@ fn format_systemd_oncalendar(frequency: &ScheduleFrequency) -> String {
             format!("OnCalendar=*-*-* {}", time.format("%H:%M:%S"))
         }
         ScheduleFrequency::Weekly { days, time } => {
-            let day_str: String = days.iter()
+            let day_str: String = days
+                .iter()
                 .map(|d| match d {
                     chrono::Weekday::Mon => "Mon",
                     chrono::Weekday::Tue => "Tue",
@@ -200,7 +205,9 @@ fn convert_cron_to_oncalendar(cron: &str) -> String {
     let hour = parts[1];
     let day = if parts[2] == "*" { "*" } else { parts[2] };
     let month = if parts[3] == "*" { "*" } else { parts[3] };
-    let weekday = if parts[4] == "*" { "" } else {
+    let weekday = if parts[4] == "*" {
+        ""
+    } else {
         match parts[4] {
             "0" | "7" => "Sun ",
             "1" => "Mon ",
@@ -231,9 +238,7 @@ fn register_cron(schedule: &Schedule) -> Result<()> {
     );
 
     // Read current crontab
-    let output = Command::new("crontab")
-        .arg("-l")
-        .output();
+    let output = Command::new("crontab").arg("-l").output();
 
     let current_crontab = match output {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
@@ -277,9 +282,7 @@ fn register_cron(schedule: &Schedule) -> Result<()> {
 /// Unregister a cron job
 fn unregister_cron(schedule: &Schedule) -> Result<()> {
     // Read current crontab
-    let output = Command::new("crontab")
-        .arg("-l")
-        .output()?;
+    let output = Command::new("crontab").arg("-l").output()?;
 
     if !output.status.success() {
         return Ok(());
@@ -326,7 +329,8 @@ fn format_cron_schedule(frequency: &ScheduleFrequency) -> String {
             format!("{} {} * * *", time.format("%M"), time.format("%H"))
         }
         ScheduleFrequency::Weekly { days, time } => {
-            let day_nums: String = days.iter()
+            let day_nums: String = days
+                .iter()
                 .map(|d| match d {
                     chrono::Weekday::Sun => "0",
                     chrono::Weekday::Mon => "1",
@@ -370,7 +374,11 @@ mod tests {
     #[test]
     fn test_format_cron_weekly() {
         let freq = ScheduleFrequency::Weekly {
-            days: vec![chrono::Weekday::Mon, chrono::Weekday::Wed, chrono::Weekday::Fri],
+            days: vec![
+                chrono::Weekday::Mon,
+                chrono::Weekday::Wed,
+                chrono::Weekday::Fri,
+            ],
             time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
         };
         let cron = format_cron_schedule(&freq);

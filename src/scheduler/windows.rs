@@ -29,8 +29,10 @@ pub fn register_task(schedule: &Schedule) -> Result<()> {
     // Build the schtasks command
     let mut args = vec![
         "/Create".to_string(),
-        "/TN".to_string(), task_name.clone(),
-        "/TR".to_string(), format!("\"{}\" --run-schedule {}", exe_path.display(), schedule.id),
+        "/TN".to_string(),
+        task_name.clone(),
+        "/TR".to_string(),
+        format!("\"{}\" --run-schedule {}", exe_path.display(), schedule.id),
         "/F".to_string(), // Force overwrite
     ];
 
@@ -57,7 +59,8 @@ pub fn register_task(schedule: &Schedule) -> Result<()> {
             args.push(time.format("%H:%M").to_string());
 
             if !days.is_empty() {
-                let day_str: String = days.iter()
+                let day_str: String = days
+                    .iter()
                     .map(|d| match d {
                         chrono::Weekday::Mon => "MON",
                         chrono::Weekday::Tue => "TUE",
@@ -109,9 +112,7 @@ pub fn register_task(schedule: &Schedule) -> Result<()> {
     // Execute schtasks
     debug!("Creating scheduled task: schtasks {}", args.join(" "));
 
-    let output = Command::new("schtasks")
-        .args(&args)
-        .output()?;
+    let output = Command::new("schtasks").args(&args).output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

@@ -10,9 +10,7 @@ use tracing::{debug, info, warn};
 /// Check if the system is running on battery
 pub fn is_on_battery() -> bool {
     // Use pmset to check power source
-    let output = Command::new("pmset")
-        .args(["-g", "batt"])
-        .output();
+    let output = Command::new("pmset").args(["-g", "batt"]).output();
 
     match output {
         Ok(o) if o.status.success() => {
@@ -78,7 +76,11 @@ pub fn register_launchd(schedule: &Schedule) -> Result<()> {
         schedule.id,
         format_launchd_calendar(&schedule.config.frequency),
         schedule.config.options.cpu_priority.nice_value(),
-        if schedule.config.options.cpu_priority == super::schedule::CpuPriority::Low { "true" } else { "false" },
+        if schedule.config.options.cpu_priority == super::schedule::CpuPriority::Low {
+            "true"
+        } else {
+            "false"
+        },
         schedule.id,
         schedule.id
     );
@@ -146,10 +148,26 @@ fn format_launchd_calendar(frequency: &ScheduleFrequency) -> String {
         <key>Minute</key>
         <integer>{}</integer>
     </dict>"#,
-                datetime.format("%m").to_string().parse::<u32>().unwrap_or(1),
-                datetime.format("%d").to_string().parse::<u32>().unwrap_or(1),
-                datetime.format("%H").to_string().parse::<u32>().unwrap_or(0),
-                datetime.format("%M").to_string().parse::<u32>().unwrap_or(0)
+                datetime
+                    .format("%m")
+                    .to_string()
+                    .parse::<u32>()
+                    .unwrap_or(1),
+                datetime
+                    .format("%d")
+                    .to_string()
+                    .parse::<u32>()
+                    .unwrap_or(1),
+                datetime
+                    .format("%H")
+                    .to_string()
+                    .parse::<u32>()
+                    .unwrap_or(0),
+                datetime
+                    .format("%M")
+                    .to_string()
+                    .parse::<u32>()
+                    .unwrap_or(0)
             )
         }
         ScheduleFrequency::Daily { time } => {
@@ -171,7 +189,8 @@ fn format_launchd_calendar(frequency: &ScheduleFrequency) -> String {
             }
 
             // launchd uses Weekday: 0 = Sunday, 1 = Monday, etc.
-            let intervals: Vec<String> = days.iter()
+            let intervals: Vec<String> = days
+                .iter()
                 .map(|d| {
                     let weekday = match d {
                         chrono::Weekday::Sun => 0,
@@ -248,7 +267,8 @@ fn format_launchd_calendar(frequency: &ScheduleFrequency) -> String {
         <integer>0</integer>
         <key>Minute</key>
         <integer>0</integer>
-    </dict>"#.to_string()
+    </dict>"#
+                .to_string()
         }
     }
 }
@@ -257,9 +277,7 @@ fn format_launchd_calendar(frequency: &ScheduleFrequency) -> String {
 pub fn get_job_status(schedule: &Schedule) -> Result<JobStatus> {
     let label = format!("com.tamandua.scan.{}", schedule.id);
 
-    let output = Command::new("launchctl")
-        .args(["list", &label])
-        .output()?;
+    let output = Command::new("launchctl").args(["list", &label]).output()?;
 
     if !output.status.success() {
         return Ok(JobStatus::NotLoaded);

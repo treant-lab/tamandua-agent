@@ -22,6 +22,7 @@ pub mod protection;
 pub mod quarantine;
 pub mod resource_governor;
 pub mod response;
+pub mod scheduler;
 pub mod service;
 pub mod transport;
 pub mod updater;

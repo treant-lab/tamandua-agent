@@ -95,27 +95,15 @@ pub enum ScheduleScanType {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ScheduleFrequency {
     /// Run once at a specific time
-    Once {
-        datetime: DateTime<Utc>,
-    },
+    Once { datetime: DateTime<Utc> },
     /// Run daily at a specific time
-    Daily {
-        time: NaiveTime,
-    },
+    Daily { time: NaiveTime },
     /// Run on specific days of the week
-    Weekly {
-        days: Vec<Weekday>,
-        time: NaiveTime,
-    },
+    Weekly { days: Vec<Weekday>, time: NaiveTime },
     /// Run on specific day of the month
-    Monthly {
-        day: u32,
-        time: NaiveTime,
-    },
+    Monthly { day: u32, time: NaiveTime },
     /// Custom cron expression
-    Cron {
-        expression: String,
-    },
+    Cron { expression: String },
 }
 
 impl ScheduleFrequency {
@@ -139,7 +127,10 @@ impl ScheduleFrequency {
                 } else {
                     // Schedule for tomorrow
                     let tomorrow = today.succ_opt()?;
-                    Some(DateTime::from_naive_utc_and_offset(tomorrow.and_time(*time), Utc))
+                    Some(DateTime::from_naive_utc_and_offset(
+                        tomorrow.and_time(*time),
+                        Utc,
+                    ))
                 }
             }
             ScheduleFrequency::Weekly { days, time } => {
@@ -148,7 +139,6 @@ impl ScheduleFrequency {
                 }
 
                 let today = from.date_naive();
-                let current_weekday = today.weekday();
 
                 // Find next matching day
                 for i in 0..=7 {
@@ -213,15 +203,18 @@ impl ScheduleFrequency {
                 format!("Daily at {}", time.format("%H:%M"))
             }
             ScheduleFrequency::Weekly { days, time } => {
-                let day_names: Vec<&str> = days.iter().map(|d| match d {
-                    Weekday::Mon => "Monday",
-                    Weekday::Tue => "Tuesday",
-                    Weekday::Wed => "Wednesday",
-                    Weekday::Thu => "Thursday",
-                    Weekday::Fri => "Friday",
-                    Weekday::Sat => "Saturday",
-                    Weekday::Sun => "Sunday",
-                }).collect();
+                let day_names: Vec<&str> = days
+                    .iter()
+                    .map(|d| match d {
+                        Weekday::Mon => "Monday",
+                        Weekday::Tue => "Tuesday",
+                        Weekday::Wed => "Wednesday",
+                        Weekday::Thu => "Thursday",
+                        Weekday::Fri => "Friday",
+                        Weekday::Sat => "Saturday",
+                        Weekday::Sun => "Sunday",
+                    })
+                    .collect();
                 format!("Every {} at {}", day_names.join(", "), time.format("%H:%M"))
             }
             ScheduleFrequency::Monthly { day, time } => {
@@ -443,6 +436,7 @@ pub enum ScheduleRunStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Timelike;
 
     #[test]
     fn test_daily_next_occurrence() {

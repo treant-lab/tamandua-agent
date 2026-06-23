@@ -5,8 +5,8 @@
 //! - Linux cron/systemd timer integration
 //! - macOS launchd integration
 
-mod schedule;
 mod executor;
+mod schedule;
 
 #[cfg(target_os = "windows")]
 mod windows;
@@ -17,21 +17,22 @@ mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 
-pub use schedule::{
-    Schedule, ScheduleId, ScheduleConfig, ScheduleFrequency, ScanOptions,
-    DetectionAction, CpuPriority, ScheduleStatus, ScheduleRun, ScheduleRunStatus,
-};
 pub use executor::ScheduleExecutor;
+pub use schedule::{
+    CpuPriority, DetectionAction, ScanOptions, Schedule, ScheduleConfig, ScheduleFrequency,
+    ScheduleId, ScheduleRun, ScheduleRunStatus, ScheduleStatus,
+};
 
+use crate::config::AgentConfig;
 use anyhow::Result;
+use chrono::{DateTime, NaiveTime, Utc, Weekday};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
-use chrono::{DateTime, Utc, Local, NaiveTime, Datelike, Weekday};
 
 /// Scheduler manager for handling scheduled scans
 pub struct Scheduler {
@@ -62,8 +63,19 @@ pub struct RunningSchedule {
 impl Scheduler {
     /// Create a new scheduler
     pub fn new(storage_path: PathBuf) -> Self {
-        let (trigger_tx, trigger_rx) = mpsc::channel(32);
-        let executor = Arc::new(ScheduleExecutor::new());
+        Self::with_executor(storage_path, Arc::new(ScheduleExecutor::new()))
+    }
+
+    /// Create a new scheduler with agent-configured scanning engines.
+    pub fn new_with_config(storage_path: PathBuf, config: &AgentConfig) -> Self {
+        Self::with_executor(
+            storage_path,
+            Arc::new(ScheduleExecutor::from_config(config)),
+        )
+    }
+
+    fn with_executor(storage_path: PathBuf, executor: Arc<ScheduleExecutor>) -> Self {
+        let (trigger_tx, _trigger_rx) = mpsc::channel(32);
 
         let scheduler = Self {
             schedules: Arc::new(RwLock::new(HashMap::new())),
@@ -102,7 +114,8 @@ impl Scheduler {
                 let now = Utc::now();
                 let schedules_to_run: Vec<Schedule> = {
                     let scheds = schedules.read();
-                    scheds.values()
+                    scheds
+                        .values()
                         .filter(|s| s.enabled && s.should_run_now(&now))
                         .cloned()
                         .collect()
@@ -132,7 +145,9 @@ impl Scheduler {
                     let history_clone = history.clone();
 
                     tokio::spawn(async move {
-                        let result = executor_clone.execute_schedule(&schedule_clone, running_clone.clone()).await;
+                        let result = executor_clone
+                            .execute_schedule(&schedule_clone, running_clone.clone())
+                            .await;
 
                         // Record result in history
                         let run = ScheduleRun {
@@ -140,7 +155,11 @@ impl Scheduler {
                             schedule_id: schedule_clone.id,
                             started_at: Utc::now(),
                             completed_at: Some(Utc::now()),
-                            status: if result.is_ok() { ScheduleRunStatus::Completed } else { ScheduleRunStatus::Failed },
+                            status: if result.is_ok() {
+                                ScheduleRunStatus::Completed
+                            } else {
+                                ScheduleRunStatus::Failed
+                            },
                             files_scanned: result.as_ref().map(|r| r.files_scanned).unwrap_or(0),
                             threats_found: result.as_ref().map(|r| r.threats_found).unwrap_or(0),
                             error_message: result.as_ref().err().map(|e| e.to_string()),
@@ -208,7 +227,8 @@ impl Scheduler {
     pub fn update_schedule(&self, id: ScheduleId, config: ScheduleConfig) -> Result<Schedule> {
         let mut schedule = {
             let schedules = self.schedules.read();
-            schedules.get(&id)
+            schedules
+                .get(&id)
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("Schedule not found: {}", id))?
         };
@@ -217,7 +237,7 @@ impl Scheduler {
         self.unregister_system_schedule(&schedule)?;
 
         // Update schedule
-        schedule.name = config.name;
+        schedule.name = config.name.clone();
         schedule.config = config;
         schedule.updated_at = Utc::now();
         schedule.update_next_run();
@@ -238,7 +258,8 @@ impl Scheduler {
     pub fn delete_schedule(&self, id: ScheduleId) -> Result<()> {
         let schedule = {
             let mut schedules = self.schedules.write();
-            schedules.remove(&id)
+            schedules
+                .remove(&id)
                 .ok_or_else(|| anyhow::anyhow!("Schedule not found: {}", id))?
         };
 
@@ -252,7 +273,8 @@ impl Scheduler {
     /// Enable or disable a schedule
     pub fn set_schedule_enabled(&self, id: ScheduleId, enabled: bool) -> Result<()> {
         let mut schedules = self.schedules.write();
-        let schedule = schedules.get_mut(&id)
+        let schedule = schedules
+            .get_mut(&id)
             .ok_or_else(|| anyhow::anyhow!("Schedule not found: {}", id))?;
 
         schedule.enabled = enabled;
@@ -261,9 +283,12 @@ impl Scheduler {
         drop(schedules);
         self.save_schedules()?;
 
-        info!("Schedule {} {} ({})",
+        info!(
+            "Schedule {} {} ({})",
             if enabled { "enabled" } else { "disabled" },
-            id, enabled);
+            id,
+            enabled
+        );
         Ok(())
     }
 
@@ -271,7 +296,8 @@ impl Scheduler {
     pub async fn run_now(&self, id: ScheduleId) -> Result<()> {
         let schedule = {
             let schedules = self.schedules.read();
-            schedules.get(&id)
+            schedules
+                .get(&id)
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("Schedule not found: {}", id))?
         };
@@ -299,7 +325,11 @@ impl Scheduler {
                 schedule_id: schedule.id,
                 started_at: Utc::now(),
                 completed_at: Some(Utc::now()),
-                status: if result.is_ok() { ScheduleRunStatus::Completed } else { ScheduleRunStatus::Failed },
+                status: if result.is_ok() {
+                    ScheduleRunStatus::Completed
+                } else {
+                    ScheduleRunStatus::Failed
+                },
                 files_scanned: result.as_ref().map(|r| r.files_scanned).unwrap_or(0),
                 threats_found: result.as_ref().map(|r| r.threats_found).unwrap_or(0),
                 error_message: result.as_ref().err().map(|e| e.to_string()),
@@ -307,9 +337,7 @@ impl Scheduler {
 
             {
                 let mut hist = history.write();
-                hist.entry(schedule.id)
-                    .or_insert_with(Vec::new)
-                    .push(run);
+                hist.entry(schedule.id).or_insert_with(Vec::new).push(run);
             }
 
             // Remove from running
@@ -325,16 +353,10 @@ impl Scheduler {
     /// Get schedule run history
     pub fn get_history(&self, id: ScheduleId, limit: Option<usize>) -> Vec<ScheduleRun> {
         let history = self.history.read();
-        let runs = history.get(&id)
-            .map(|r| r.as_slice())
-            .unwrap_or(&[]);
+        let runs = history.get(&id).map(|r| r.as_slice()).unwrap_or(&[]);
 
         let limit = limit.unwrap_or(100);
-        runs.iter()
-            .rev()
-            .take(limit)
-            .cloned()
-            .collect()
+        runs.iter().rev().take(limit).cloned().collect()
     }
 
     /// Get running status for a schedule
@@ -457,7 +479,9 @@ pub fn daily_quick_scan_preset() -> ScheduleConfig {
     ScheduleConfig {
         name: "Daily Quick Scan".to_string(),
         scan_type: schedule::ScheduleScanType::Quick,
-        frequency: ScheduleFrequency::Daily { time: NaiveTime::from_hms_opt(12, 0, 0).unwrap() },
+        frequency: ScheduleFrequency::Daily {
+            time: NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
+        },
         paths: vec![],
         options: ScanOptions::default(),
         detection_action: DetectionAction::Alert,
@@ -471,7 +495,7 @@ pub fn weekly_full_scan_preset() -> ScheduleConfig {
         scan_type: schedule::ScheduleScanType::Full,
         frequency: ScheduleFrequency::Weekly {
             days: vec![Weekday::Sun],
-            time: NaiveTime::from_hms_opt(3, 0, 0).unwrap()
+            time: NaiveTime::from_hms_opt(3, 0, 0).unwrap(),
         },
         paths: vec![],
         options: ScanOptions {
@@ -493,7 +517,10 @@ mod tests {
     fn test_daily_quick_scan_preset() {
         let config = daily_quick_scan_preset();
         assert_eq!(config.name, "Daily Quick Scan");
-        assert!(matches!(config.scan_type, schedule::ScheduleScanType::Quick));
+        assert!(matches!(
+            config.scan_type,
+            schedule::ScheduleScanType::Quick
+        ));
     }
 
     #[test]
