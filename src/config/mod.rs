@@ -1237,7 +1237,11 @@ impl OfflineDetectionConfig {
     fn default_model_path() -> String {
         #[cfg(target_os = "windows")]
         {
-            r"C:\ProgramData\Tamandua\models\malware_smell.onnx".to_string()
+            windows_data_dir()
+                .join("models")
+                .join("malware_smell.onnx")
+                .to_string_lossy()
+                .to_string()
         }
         #[cfg(target_os = "linux")]
         {
@@ -1256,7 +1260,11 @@ impl OfflineDetectionConfig {
     fn default_rules_dir() -> String {
         #[cfg(target_os = "windows")]
         {
-            r"C:\ProgramData\Tamandua\rules\yara".to_string()
+            windows_data_dir()
+                .join("rules")
+                .join("yara")
+                .to_string_lossy()
+                .to_string()
         }
         #[cfg(target_os = "linux")]
         {
@@ -1314,6 +1322,17 @@ impl OfflineDetectionConfig {
             }
         }
     }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_data_dir() -> std::path::PathBuf {
+    if let Some(path) = std::env::var_os("TAMANDUA_DATA_DIR").map(std::path::PathBuf::from) {
+        return path;
+    }
+
+    std::env::var_os("ProgramData")
+        .map(|p| std::path::PathBuf::from(p).join("Tamandua"))
+        .unwrap_or_else(|| std::path::PathBuf::from(r"C:\ProgramData\Tamandua"))
 }
 
 // ============================================================================
