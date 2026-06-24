@@ -880,8 +880,8 @@ impl OfflineDetector {
         let health_url = backend_url
             .replace("wss://", "https://")
             .replace("ws://", "http://")
-            .replace("/socket/agent/websocket", "/api/health")
-            .replace("/socket/agent", "/api/health");
+            .replace("/socket/agent/websocket", "/health")
+            .replace("/socket/agent", "/health");
 
         let client = match reqwest::Client::builder()
             .timeout(Duration::from_secs(5))

@@ -1970,6 +1970,8 @@ impl AgentConfig {
         #[cfg(target_os = "windows")]
         self.ensure_monitored_file_patterns(&["*.aspx", "*.asp", "*.jsp", "*.php"]);
 
+        let offline_detection_requested = self.offline_detection.enabled;
+
         match self.performance_profile {
             PerformanceProfile::Aggressive => {
                 // Sub-loop multiplier: keep original intervals
@@ -2324,8 +2326,19 @@ impl AgentConfig {
                 // Disable File Journal (Ransomware Rollback) - Heavy I/O
                 self.file_journal.enabled = false;
 
-                // Disable Offline Detection (YARA/ML) - CPU intensive
-                self.offline_detection.enabled = false;
+                // Keep the image-based ONNX offline detector available when a
+                // local model is staged. It is invoked only for file-content
+                // events and avoids the always-on cost of the feature-based
+                // ml_local engine, which remains disabled in lightweight mode.
+                #[cfg(not(feature = "onnx"))]
+                {
+                    self.offline_detection.enabled = false;
+                }
+                #[cfg(feature = "onnx")]
+                {
+                    self.offline_detection.enabled = offline_detection_requested
+                        && std::path::Path::new(&self.offline_detection.onnx_model_path).exists();
+                }
 
                 // Disable USB Enforcement - Polling overhead
                 self.usb_enforcement.enabled = false;

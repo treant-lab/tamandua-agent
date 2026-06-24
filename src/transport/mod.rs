@@ -2841,15 +2841,7 @@ impl BackendClient {
         }
 
         let mut roots = rustls::RootCertStore::empty();
-        let native_certs = rustls_native_certs::load_native_certs()
-            .context("Failed to load native root certificates")?;
         let mut native_loaded = 0usize;
-        for cert in native_certs {
-            if roots.add(cert).is_ok() {
-                native_loaded += 1;
-            }
-        }
-
         if let Some(ca_path) = &config.tls.ca_path {
             let ca_bytes = tokio::fs::read(ca_path).await?;
             let mut reader = BufReader::new(Cursor::new(ca_bytes));
@@ -2862,16 +2854,27 @@ impl BackendClient {
                     .add(cert)
                     .context("Failed to add mTLS CA certificate to trust store")?;
             }
-            info!(
-                native = native_loaded,
-                custom = count,
-                "Loaded native and custom CA certificates for Rustls"
-            );
+            info!(custom = count, "Loaded custom CA certificates for Rustls");
         } else {
-            info!(
-                count = native_loaded,
-                "Loaded native root certificates for Rustls"
-            );
+            match rustls_native_certs::load_native_certs() {
+                Ok(native_certs) => {
+                    for cert in native_certs {
+                        if roots.add(cert).is_ok() {
+                            native_loaded += 1;
+                        }
+                    }
+                    info!(
+                        count = native_loaded,
+                        "Loaded native root certificates for Rustls"
+                    );
+                }
+                Err(error) => {
+                    warn!(
+                        error = %error,
+                        "Failed to load native root certificates for Rustls"
+                    );
+                }
+            }
         }
 
         let builder = RustlsClientConfig::builder().with_root_certificates(roots);

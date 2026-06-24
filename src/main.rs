@@ -528,10 +528,22 @@ enum ServiceCommand {
     },
 }
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 16)]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let args = Args::parse();
 
+    #[cfg(target_os = "windows")]
+    if matches!(args.command, Some(ServiceCommand::Service)) {
+        return handle_windows_service_entrypoint(&args);
+    }
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(16)
+        .enable_all()
+        .build()?;
+    runtime.block_on(async_main(args))
+}
+
+async fn async_main(args: Args) -> Result<()> {
     // Apply process mitigation policies FIRST, before any other code runs
     // These must be set early and cannot be reversed once applied
     #[cfg(target_os = "windows")]
@@ -963,6 +975,55 @@ fn default_agent_log_dir() -> PathBuf {
 }
 
 #[cfg(target_os = "windows")]
+fn handle_windows_service_entrypoint(args: &Args) -> Result<()> {
+    configure_windows_service_data_dirs(args);
+
+    let cli_profile_override = args.profile.as_ref().map(|p| match p.as_str() {
+        "aggressive" => config::PerformanceProfile::Aggressive,
+        "lightweight" => config::PerformanceProfile::Lightweight,
+        _ => config::PerformanceProfile::Balanced,
+    });
+
+    let mut config = if args.config.exists() {
+        AgentConfig::from_file(&args.config)?
+    } else {
+        AgentConfig::default()
+    };
+    if let Some(profile) = cli_profile_override {
+        config.performance_profile = profile;
+    }
+    config.apply_performance_profile();
+
+    run_windows_service_full(config, cli_profile_override)
+}
+
+#[cfg(target_os = "windows")]
+fn configure_windows_service_data_dirs(args: &Args) {
+    if std::env::var_os("TAMANDUA_DATA_DIR").is_some()
+        && std::env::var_os("TAMANDUA_AGENT_LOG_DIR").is_some()
+    {
+        return;
+    }
+
+    let Some(data_dir) = args
+        .config
+        .parent()
+        .and_then(|config_dir| config_dir.parent())
+        .map(PathBuf::from)
+    else {
+        return;
+    };
+
+    if std::env::var_os("TAMANDUA_DATA_DIR").is_none() {
+        std::env::set_var("TAMANDUA_DATA_DIR", &data_dir);
+    }
+
+    if std::env::var_os("TAMANDUA_AGENT_LOG_DIR").is_none() {
+        std::env::set_var("TAMANDUA_AGENT_LOG_DIR", data_dir.join("logs"));
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn tamandua_data_dir() -> PathBuf {
     if let Some(path) = std::env::var_os("TAMANDUA_DATA_DIR").map(PathBuf::from) {
         return path;
@@ -985,7 +1046,7 @@ fn tamandua_data_dir() -> PathBuf {
 }
 
 #[cfg(target_os = "windows")]
-async fn run_windows_service_full(
+fn run_windows_service_full(
     config: AgentConfig,
     cli_profile_override: Option<config::PerformanceProfile>,
 ) -> Result<()> {
@@ -1010,15 +1071,6 @@ async fn run_windows_service_full(
     }
 
     fn run_service(_arguments: Vec<std::ffi::OsString>) -> Result<()> {
-        let runtime = tokio::runtime::Runtime::new()?;
-        let (config, cli_profile_override) = FULL_SERVICE_CONFIG
-            .get()
-            .cloned()
-            .unwrap_or((AgentConfig::load_or_default()?, None));
-
-        #[cfg(target_os = "windows")]
-        let _instance_guard = acquire_agent_instance_guard(&config)?;
-
         let (shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(1);
         let shutdown_tx_for_handler = shutdown_tx.clone();
 
@@ -1057,6 +1109,19 @@ async fn run_windows_service_full(
             wait_hint: std::time::Duration::default(),
             process_id: None,
         })?;
+
+        if let Err(error) = init_logging("info") {
+            eprintln!("Warning: Failed to initialize service logging: {}", error);
+        }
+
+        let runtime = tokio::runtime::Runtime::new()?;
+        let (config, cli_profile_override) = FULL_SERVICE_CONFIG
+            .get()
+            .cloned()
+            .unwrap_or((AgentConfig::load_or_default()?, None));
+
+        #[cfg(target_os = "windows")]
+        let _instance_guard = acquire_agent_instance_guard(&config)?;
 
         #[cfg(target_os = "windows")]
         {
@@ -1111,7 +1176,7 @@ async fn handle_service_command(
             // Run as Windows service (this is only called from SCM)
             #[cfg(target_os = "windows")]
             {
-                run_windows_service_full(config, cli_profile_override).await?;
+                run_windows_service_full(config, cli_profile_override)?;
             }
 
             // On Linux/macOS, run in foreground (systemd/launchd manage the process)

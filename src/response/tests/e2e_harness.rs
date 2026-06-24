@@ -212,8 +212,7 @@ mod scaffold_tests {
     fn test_scenario_serialization() {
         let scenarios = scaffold_scenarios();
         let json = serde_json::to_string(&scenarios).expect("Should serialize");
-        let parsed: Vec<E2EScenario> =
-            serde_json::from_str(&json).expect("Should deserialize");
+        let parsed: Vec<E2EScenario> = serde_json::from_str(&json).expect("Should deserialize");
         assert_eq!(scenarios.len(), parsed.len());
     }
 }
