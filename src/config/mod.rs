@@ -2070,7 +2070,15 @@ impl AgentConfig {
                 self.collectors.clipboard_dlp_enabled = false;
                 self.collectors.ai_discovery_enabled = false;
                 self.collectors.software_inventory_enabled = false;
-                self.offline_detection.enabled = false;
+                #[cfg(not(feature = "onnx"))]
+                {
+                    self.offline_detection.enabled = false;
+                }
+                #[cfg(feature = "onnx")]
+                {
+                    self.offline_detection.enabled = offline_detection_requested
+                        && std::path::Path::new(&self.offline_detection.onnx_model_path).exists();
+                }
                 #[cfg(target_os = "windows")]
                 {
                     self.collectors.identity_enabled = false;
@@ -2156,7 +2164,15 @@ impl AgentConfig {
                 self.collectors.clipboard_dlp_enabled = false;
                 self.collectors.ai_discovery_enabled = false;
                 self.collectors.software_inventory_enabled = false;
-                self.offline_detection.enabled = false;
+                #[cfg(not(feature = "onnx"))]
+                {
+                    self.offline_detection.enabled = false;
+                }
+                #[cfg(feature = "onnx")]
+                {
+                    self.offline_detection.enabled = offline_detection_requested
+                        && std::path::Path::new(&self.offline_detection.onnx_model_path).exists();
+                }
                 #[cfg(target_os = "windows")]
                 {
                     self.collectors.identity_enabled = false;

@@ -110,7 +110,14 @@ impl OnnxInferenceConfig {
     fn default_model_path() -> PathBuf {
         #[cfg(target_os = "windows")]
         {
-            PathBuf::from(r"C:\ProgramData\Tamandua\models\malware_smell.onnx")
+            std::env::var_os("TAMANDUA_DATA_DIR")
+                .map(PathBuf::from)
+                .or_else(|| {
+                    std::env::var_os("ProgramData").map(|p| PathBuf::from(p).join("Tamandua"))
+                })
+                .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData\Tamandua"))
+                .join("models")
+                .join("malware_smell.onnx")
         }
         #[cfg(target_os = "linux")]
         {
