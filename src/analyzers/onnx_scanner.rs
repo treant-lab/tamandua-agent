@@ -244,6 +244,28 @@ impl OnnxScanner {
     /// Load the ONNX model
     #[cfg(feature = "onnx")]
     fn load_model(config: &OnnxScannerConfig) -> (Option<Session>, bool) {
+        match std::panic::catch_unwind(|| Self::load_model_inner(config)) {
+            Ok(result) => result,
+            Err(payload) => {
+                let reason = if let Some(message) = payload.downcast_ref::<&str>() {
+                    (*message).to_string()
+                } else if let Some(message) = payload.downcast_ref::<String>() {
+                    message.clone()
+                } else {
+                    "unknown ONNX Runtime panic".to_string()
+                };
+                error!(
+                    model_path = %config.model_path.display(),
+                    reason = %reason,
+                    "ONNX Runtime panicked while loading scanner model; scanner fallback enabled"
+                );
+                (None, false)
+            }
+        }
+    }
+
+    #[cfg(feature = "onnx")]
+    fn load_model_inner(config: &OnnxScannerConfig) -> (Option<Session>, bool) {
         if !config.model_path.exists() {
             warn!(
                 model_path = %config.model_path.display(),
@@ -256,7 +278,9 @@ impl OnnxScanner {
             Ok(builder) => {
                 // Configure session options
                 let builder = match builder
-                    .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)
+                    .with_optimization_level(
+                        ort::session::builder::GraphOptimizationLevel::Disable,
+                    )
                 {
                     Ok(b) => b,
                     Err(e) => {
@@ -266,7 +290,7 @@ impl OnnxScanner {
                 };
 
                 // Try to set intra-op parallelism.
-                let builder = match builder.with_intra_threads(4) {
+                let builder = match builder.with_intra_threads(2) {
                     Ok(b) => b,
                     Err(e) => {
                         error!(error = %e, "Failed to set intra-op threads");

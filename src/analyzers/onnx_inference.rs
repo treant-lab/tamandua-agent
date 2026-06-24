@@ -287,6 +287,28 @@ impl OnnxInferenceEngine {
 
     #[cfg(feature = "onnx")]
     fn try_load_model(config: &OnnxInferenceConfig) -> (Option<Session>, bool) {
+        match std::panic::catch_unwind(|| Self::try_load_model_inner(config)) {
+            Ok(result) => result,
+            Err(payload) => {
+                let reason = if let Some(message) = payload.downcast_ref::<&str>() {
+                    (*message).to_string()
+                } else if let Some(message) = payload.downcast_ref::<String>() {
+                    message.clone()
+                } else {
+                    "unknown ONNX Runtime panic".to_string()
+                };
+                error!(
+                    model_path = %config.model_path.display(),
+                    reason = %reason,
+                    "ONNX Runtime panicked while loading model; disabling local ML"
+                );
+                (None, false)
+            }
+        }
+    }
+
+    #[cfg(feature = "onnx")]
+    fn try_load_model_inner(config: &OnnxInferenceConfig) -> (Option<Session>, bool) {
         if !config.model_path.exists() {
             warn!(
                 path = %config.model_path.display(),
@@ -304,7 +326,7 @@ impl OnnxInferenceEngine {
         };
 
         let builder = match builder
-            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)
+            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Disable)
         {
             Ok(b) => b,
             Err(e) => {
