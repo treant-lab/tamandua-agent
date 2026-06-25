@@ -97,6 +97,7 @@ mod performance;
 mod pki;
 mod resource_governor;
 mod resource_manager;
+mod scheduler;
 mod tracing;
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 mod tray;
@@ -2134,6 +2135,10 @@ impl Agent {
         // Start ML scan result handler - process results from server
         let ml_result_handle = self.start_ml_result_handler().await?;
 
+        // Start scheduled scan manager. This only loads and waits for configured
+        // schedules; it does not create or run a default scan on startup.
+        let scheduled_scan_handle = self.start_scheduled_scan_manager().await?;
+
         // Start self-updater background loop (if enabled)
         let updater_handle = if self.config.updater.enabled {
             match updater::Updater::new(
@@ -2317,6 +2322,9 @@ impl Agent {
             _ = ml_result_handle => {
                 error!("ML result handler ended unexpectedly");
             }
+            _ = scheduled_scan_handle => {
+                error!("Scheduled scan manager ended unexpectedly");
+            }
             _ = backend_status_handle => {
                 error!("Backend status reporter ended unexpectedly");
             }
@@ -2426,6 +2434,47 @@ impl Agent {
         Ok(handle)
     }
 
+    async fn start_scheduled_scan_manager(&self) -> Result<tokio::task::JoinHandle<()>> {
+        let config = self.config.clone();
+        let storage_path = Self::scheduled_scan_storage_dir();
+
+        if let Err(error) = std::fs::create_dir_all(&storage_path) {
+            warn!(
+                error = %error,
+                path = %storage_path.display(),
+                "Failed to create scheduled scan storage directory; scheduled scans disabled"
+            );
+
+            return Ok(tokio::spawn(async {}));
+        }
+
+        let handle = tokio::spawn(async move {
+            let scheduler = scheduler::Scheduler::new_with_config(storage_path.clone(), &config);
+
+            match scheduler.start().await {
+                Ok(()) => {
+                    info!(
+                        path = %storage_path.display(),
+                        ml_scanning_enabled = config.ml_scanning_enabled,
+                        ml_local_enabled = config.ml_local.enabled,
+                        skip_expensive_analysis = config.collector_tuning.skip_expensive_analysis,
+                        "Scheduled scan manager started"
+                    );
+                    std::future::pending::<()>().await;
+                }
+                Err(error) => {
+                    error!(
+                        error = %error,
+                        path = %storage_path.display(),
+                        "Scheduled scan manager failed to start"
+                    );
+                }
+            }
+        });
+
+        Ok(handle)
+    }
+
     fn config_update_path() -> String {
         if cfg!(windows) {
             tamandua_data_dir()
@@ -2437,6 +2486,16 @@ impl Agent {
             "/Library/Application Support/Tamandua/config/agent.toml".to_string()
         } else {
             "/etc/tamandua/agent.toml".to_string()
+        }
+    }
+
+    fn scheduled_scan_storage_dir() -> PathBuf {
+        if cfg!(windows) {
+            tamandua_data_dir().join("schedules")
+        } else if cfg!(target_os = "macos") {
+            PathBuf::from("/Library/Application Support/Tamandua/schedules")
+        } else {
+            PathBuf::from("/var/lib/tamandua/schedules")
         }
     }
 
