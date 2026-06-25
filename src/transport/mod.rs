@@ -212,6 +212,7 @@ pub enum CommandType {
     ScheduledTasks,
     StartupItems,
     ShellExecute,
+    OsInfo,
     // Live Response - Process Manager commands
     ProcessTreeList,
     ProcessKill,

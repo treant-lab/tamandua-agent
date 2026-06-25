@@ -116,6 +116,7 @@ pub async fn execute_command(command: &Command) -> CommandResult {
         CommandType::ScheduledTasks => live_response_scheduled_tasks(&command.payload).await,
         CommandType::StartupItems => live_response_startup_items(&command.payload).await,
         CommandType::ShellExecute => live_response_shell_execute(&command.payload).await,
+        CommandType::OsInfo => os_info().await,
         // Live Response - Process Manager commands
         CommandType::ProcessTreeList => {
             crate::live_response::process_tree_list(&command.payload).await
@@ -2257,6 +2258,23 @@ async fn scan_path(payload: &serde_json::Value) -> CommandResult {
             "files_scanned": files_scanned,
             "threats_found": threats.len(),
             "threats": threats,
+        })),
+    }
+}
+
+async fn os_info() -> CommandResult {
+    let hostname = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "unknown".to_string());
+
+    CommandResult {
+        success: true,
+        error_message: None,
+        result_data: Some(serde_json::json!({
+            "hostname": hostname,
+            "os": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+            "family": std::env::consts::FAMILY,
         })),
     }
 }

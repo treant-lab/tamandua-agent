@@ -121,8 +121,8 @@ async fn main() -> Result<()> {
         let client = BackendClient::new(&config, None).await?;
         client.connect().await?;
 
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        if !client.is_connected().await {
+        let connected = wait_for_backend_ready(&client, std::time::Duration::from_secs(15)).await;
+        if !connected {
             bail!("backend connection did not become ready");
         }
 
@@ -156,6 +156,18 @@ async fn main() -> Result<()> {
 
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
+}
+
+#[cfg(feature = "onnx")]
+async fn wait_for_backend_ready(client: &BackendClient, timeout: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if client.is_connected().await {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    client.is_connected().await
 }
 
 #[cfg(feature = "onnx")]
