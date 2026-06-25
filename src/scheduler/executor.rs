@@ -5,6 +5,7 @@ use super::schedule::{
 };
 use super::RunningSchedule;
 use crate::analyzers::ml_local::LocalMLFeatureEngine;
+use crate::analyzers::threat_intel::{IocType, ThreatIntelDb};
 use crate::collectors::{
     Detection, DetectionType, EventPayload, EventType, Severity, TelemetryEvent,
 };
@@ -15,10 +16,9 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::SystemTime;
 use tokio::sync::mpsc;
-#[cfg(feature = "yara")]
-use tracing::warn;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use walkdir::WalkDir;
 
 /// Result of a schedule execution
@@ -46,6 +46,10 @@ pub struct ScheduleExecutor {
     /// Local directory containing `.yar`/`.yara` files for scheduled scans.
     #[cfg(feature = "yara")]
     yara_rules_dir: Option<String>,
+    /// Cached IOC database used for hash reputation during scheduled scans.
+    ioc_db: tokio::sync::RwLock<Option<CachedIocDb>>,
+    /// Local IOC list path installed by the model/rule updater.
+    ioc_list_path: PathBuf,
     /// Optional telemetry sink for scheduled-scan detections.
     telemetry_tx: Option<mpsc::Sender<TelemetryEvent>>,
 }
@@ -63,6 +67,8 @@ impl ScheduleExecutor {
             yara_scanner: tokio::sync::OnceCell::new(),
             #[cfg(feature = "yara")]
             yara_rules_dir: None,
+            ioc_db: tokio::sync::RwLock::new(None),
+            ioc_list_path: default_ioc_list_path(),
             telemetry_tx: None,
         }
     }
@@ -417,14 +423,13 @@ impl ScheduleExecutor {
         // Calculate hash
         let hash = sha256_hash(&contents);
 
-        // Check against known threat hashes (stub - integrate with real detection)
-        if self.check_hash_reputation(&hash).await {
+        if let Some(hash_match) = self.check_hash_reputation(&hash).await {
             return Ok(ScanFileResult {
                 is_threat: true,
-                threat_name: "Known malware hash".to_string(),
-                severity: "high".to_string(),
+                threat_name: hash_match.threat_name,
+                severity: hash_match.severity,
                 detection_method: "hash".to_string(),
-                confidence: None,
+                confidence: hash_match.confidence,
             });
         }
 
@@ -455,12 +460,117 @@ impl ScheduleExecutor {
     }
 
     /// Check hash against reputation database
-    async fn check_hash_reputation(&self, _hash: &str) -> bool {
-        // STUB — PRODUCTION-GAP, not production. Always returns false (no match).
-        // Reached by the scheduled-scan loop via scan_file(); means hash-reputation
-        // checks are silently disabled and known-bad hashes will scan as clean.
-        // Missing: threat-intel/reputation lookup integration.
-        false
+    async fn check_hash_reputation(&self, hash: &str) -> Option<HashReputationMatch> {
+        let db = self.get_ioc_database().await?;
+
+        let matches = db.check(IocType::Sha256, hash).await;
+        if matches.is_empty() {
+            return None;
+        }
+
+        let best = matches
+            .iter()
+            .max_by(|left, right| {
+                left.confidence
+                    .partial_cmp(&right.confidence)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .cloned()?;
+
+        let description = best.description.unwrap_or_default();
+        let threat_name = if description.is_empty() {
+            format!("Known malicious hash from {}", best.source)
+        } else {
+            format!("Known malicious hash from {}: {}", best.source, description)
+        };
+
+        Some(HashReputationMatch {
+            threat_name,
+            severity: severity_to_string(best.severity),
+            confidence: Some(best.confidence),
+        })
+    }
+
+    async fn get_ioc_database(&self) -> Option<Arc<ThreatIntelDb>> {
+        let metadata = match tokio::fs::metadata(&self.ioc_list_path).await {
+            Ok(metadata) if metadata.is_file() => metadata,
+            _ => {
+                let mut cached = self.ioc_db.write().await;
+                if cached.is_some() {
+                    info!(
+                        path = %self.ioc_list_path.display(),
+                        "Local IOC list disappeared; disabling scheduled scan hash reputation cache"
+                    );
+                    *cached = None;
+                }
+                return None;
+            }
+        };
+        let modified = metadata.modified().ok();
+
+        {
+            let cached = self.ioc_db.read().await;
+            if let Some(cached) = cached.as_ref() {
+                if cached.modified == modified {
+                    return Some(cached.db.clone());
+                }
+            }
+        }
+
+        let loaded = self.load_ioc_database(modified).await?;
+        let db = loaded.db.clone();
+
+        let mut cached = self.ioc_db.write().await;
+        *cached = Some(loaded);
+
+        Some(db)
+    }
+
+    async fn load_ioc_database(&self, modified: Option<SystemTime>) -> Option<CachedIocDb> {
+        if !self.ioc_list_path.is_file() {
+            info!(
+                path = %self.ioc_list_path.display(),
+                "No local IOC list found for scheduled scan hash reputation"
+            );
+            return None;
+        }
+
+        let json_data = match tokio::fs::read_to_string(&self.ioc_list_path).await {
+            Ok(data) => data,
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    path = %self.ioc_list_path.display(),
+                    "Failed to read local IOC list for scheduled scans"
+                );
+                return None;
+            }
+        };
+
+        let cache_path = default_ioc_cache_path();
+        let db = Arc::new(ThreatIntelDb::new(cache_path));
+        if let Err(error) = db.init().await {
+            warn!(error = %error, "Failed to initialize scheduled scan IOC database");
+        }
+
+        match db.load_from_json(&json_data).await {
+            Ok(count) => {
+                info!(
+                    count,
+                    path = %self.ioc_list_path.display(),
+                    "Loaded local IOC list for scheduled scan hash reputation"
+                );
+                Some(CachedIocDb { db, modified })
+            }
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    path = %self.ioc_list_path.display(),
+                    "Failed to parse local IOC list for scheduled scans"
+                );
+                None
+            }
+        }
     }
 
     /// Scan with YARA rules
@@ -801,6 +911,19 @@ struct ScanFileResult {
     confidence: Option<f32>,
 }
 
+#[derive(Debug)]
+struct HashReputationMatch {
+    threat_name: String,
+    severity: String,
+    confidence: Option<f32>,
+}
+
+#[derive(Clone)]
+struct CachedIocDb {
+    db: Arc<ThreatIntelDb>,
+    modified: Option<SystemTime>,
+}
+
 /// Calculate SHA256 hash of data
 fn sha256_hash(data: &[u8]) -> String {
     use sha2::{Digest, Sha256};
@@ -833,12 +956,61 @@ fn severity_from_string(severity: &str) -> Severity {
     }
 }
 
+fn severity_to_string(severity: Severity) -> String {
+    match severity {
+        Severity::Critical => "critical",
+        Severity::High => "high",
+        Severity::Medium => "medium",
+        Severity::Low => "low",
+        Severity::Info => "info",
+    }
+    .to_string()
+}
+
 fn detection_type_for_method(method: &str) -> DetectionType {
     match method {
         "ml_onnx" | "ml_features" => DetectionType::Ml,
         "hash" => DetectionType::ThreatIntel,
         "yara" => DetectionType::Yara,
         _ => DetectionType::Malware,
+    }
+}
+
+fn default_ioc_list_path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        PathBuf::from(r"C:\ProgramData\Tamandua\iocs.json")
+    }
+    #[cfg(target_os = "linux")]
+    {
+        PathBuf::from("/var/lib/tamandua/iocs.json")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        PathBuf::from("/Library/Application Support/Tamandua/iocs.json")
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    {
+        PathBuf::from("./iocs.json")
+    }
+}
+
+fn default_ioc_cache_path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        PathBuf::from(r"C:\ProgramData\Tamandua\cache\scheduled_scan_iocs.db")
+    }
+    #[cfg(target_os = "linux")]
+    {
+        PathBuf::from("/var/lib/tamandua/cache/scheduled_scan_iocs.db")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        PathBuf::from("/Library/Application Support/Tamandua/cache/scheduled_scan_iocs.db")
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    {
+        PathBuf::from("./cache/scheduled_scan_iocs.db")
     }
 }
 
