@@ -194,7 +194,7 @@ fn build_ml_event(
         EventType::RansomwareDetected,
         severity,
         EventPayload::Custom(serde_json::json!({
-            "detection_source": "ml_analysis",
+            "detection_source": "ml",
             "path": sample.display().to_string(),
             "file_path": sample.display().to_string(),
             "sha256": sample_sha256,
@@ -209,7 +209,10 @@ fn build_ml_event(
 
     event
         .metadata
-        .insert("source".to_string(), "ml_analysis".to_string());
+        .insert("source".to_string(), "ml".to_string());
+    event
+        .metadata
+        .insert("detection_source".to_string(), "ml".to_string());
     event
         .metadata
         .insert("provider".to_string(), "tamandua_agent".to_string());
