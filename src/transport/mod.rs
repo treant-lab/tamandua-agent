@@ -2792,10 +2792,14 @@ impl BackendClient {
             return Ok(None);
         }
 
+        let has_client_identity = Self::validate_mtls_identity_config(config)?;
+
         let mut builder = TlsConnector::builder();
 
         // Handle client certificate for mTLS
-        if let (Some(cert_path), Some(key_path)) = (&config.tls.cert_path, &config.tls.key_path) {
+        if has_client_identity {
+            let cert_path = config.tls.cert_path.as_ref().unwrap();
+            let key_path = config.tls.key_path.as_ref().unwrap();
             let cert_bytes = tokio::fs::read(cert_path).await?;
             let key_bytes = tokio::fs::read(key_path).await?;
 
@@ -2807,8 +2811,6 @@ impl BackendClient {
 
             builder.identity(identity);
             info!("Loaded client certificate for mTLS");
-        } else if config.tls.enabled {
-            warn!("TLS is enabled but mTLS client cert/key paths are incomplete");
         }
 
         // Handle custom CA for server verification
@@ -2839,6 +2841,8 @@ impl BackendClient {
         if !config.tls.enabled && !has_tls_material {
             return Ok(None);
         }
+
+        let has_client_identity = Self::validate_mtls_identity_config(config)?;
 
         let mut roots = rustls::RootCertStore::empty();
         let mut native_loaded = 0usize;
@@ -2879,9 +2883,9 @@ impl BackendClient {
 
         let builder = RustlsClientConfig::builder().with_root_certificates(roots);
 
-        let client_config = if let (Some(cert_path), Some(key_path)) =
-            (&config.tls.cert_path, &config.tls.key_path)
-        {
+        let client_config = if has_client_identity {
+            let cert_path = config.tls.cert_path.as_ref().unwrap();
+            let key_path = config.tls.key_path.as_ref().unwrap();
             let cert_bytes = tokio::fs::read(cert_path).await?;
             let key_bytes = tokio::fs::read(key_path).await?;
             let cert_chain = Self::parse_rustls_cert_chain(&cert_bytes)?;
@@ -2896,13 +2900,28 @@ impl BackendClient {
                 .with_client_auth_cert(cert_chain, private_key)
                 .context("Failed to build Rustls mTLS client config")?
         } else {
-            if config.tls.enabled {
-                warn!("TLS is enabled but mTLS client cert/key paths are incomplete");
-            }
             builder.with_no_client_auth()
         };
 
         Ok(Some(Arc::new(client_config)))
+    }
+
+    fn validate_mtls_identity_config(config: &AgentConfig) -> Result<bool> {
+        match (&config.tls.cert_path, &config.tls.key_path) {
+            (Some(_), Some(_)) => Ok(true),
+            (None, None) if config.tls.enabled => {
+                anyhow::bail!(
+                    "mTLS is enabled but tls.cert_path and tls.key_path are not configured"
+                )
+            }
+            (None, Some(_)) => {
+                anyhow::bail!("mTLS client key is configured but tls.cert_path is missing")
+            }
+            (Some(_), None) => {
+                anyhow::bail!("mTLS client certificate is configured but tls.key_path is missing")
+            }
+            (None, None) => Ok(false),
+        }
     }
 
     fn parse_rustls_cert_chain(cert_bytes: &[u8]) -> Result<Vec<CertificateDer<'static>>> {

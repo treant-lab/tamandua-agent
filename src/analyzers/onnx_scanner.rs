@@ -278,9 +278,7 @@ impl OnnxScanner {
             Ok(builder) => {
                 // Configure session options
                 let builder = match builder
-                    .with_optimization_level(
-                        ort::session::builder::GraphOptimizationLevel::Disable,
-                    )
+                    .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Disable)
                 {
                     Ok(b) => b,
                     Err(e) => {

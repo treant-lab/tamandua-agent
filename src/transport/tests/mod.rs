@@ -7,6 +7,67 @@
 mod sans_io_tests;
 
 #[cfg(test)]
+mod tls_connector_tests {
+    use crate::config::AgentConfig;
+    use crate::transport::BackendClient;
+
+    #[tokio::test]
+    async fn rustls_connector_rejects_enabled_mtls_without_identity() {
+        let mut config = AgentConfig::default();
+        config.tls.enabled = true;
+
+        let error = BackendClient::build_rustls_connector(&config)
+            .await
+            .expect_err("mTLS without cert/key must fail before connecting");
+
+        assert!(
+            error
+                .to_string()
+                .contains("tls.cert_path and tls.key_path are not configured"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn rustls_connector_rejects_partial_mtls_identity() {
+        let mut config = AgentConfig::default();
+        config.tls.cert_path = Some("C:\\ProgramData\\Tamandua\\certs\\client.crt".to_string());
+
+        let error = BackendClient::build_rustls_connector(&config)
+            .await
+            .expect_err("partial mTLS identity must fail before connecting");
+
+        assert!(
+            error.to_string().contains("tls.key_path is missing"),
+            "unexpected error: {error:#}"
+        );
+
+        let mut config = AgentConfig::default();
+        config.tls.key_path = Some("C:\\ProgramData\\Tamandua\\certs\\client.key".to_string());
+
+        let error = BackendClient::build_rustls_connector(&config)
+            .await
+            .expect_err("partial mTLS identity must fail before connecting");
+
+        assert!(
+            error.to_string().contains("tls.cert_path is missing"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn rustls_connector_without_tls_material_is_not_required() {
+        let config = AgentConfig::default();
+
+        let connector = BackendClient::build_rustls_connector(&config)
+            .await
+            .expect("default config should not require custom TLS");
+
+        assert!(connector.is_none());
+    }
+}
+
+#[cfg(test)]
 mod connection_tests {
     use crate::transport::{ConnectionState, DeliveryStats, LocalEventQueue};
 
