@@ -18,7 +18,7 @@
 #![allow(unused_must_use)]
 
 use ::tracing::{debug, error, info, trace, warn};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -94,6 +94,7 @@ mod ipc;
 mod ml;
 #[cfg(feature = "performance")]
 mod performance;
+mod pki;
 mod resource_governor;
 mod resource_manager;
 mod tracing;
@@ -400,6 +401,12 @@ enum ServiceCommand {
     ConfigValidate {
         /// Path to configuration file to validate
         path: PathBuf,
+    },
+    /// Renew the agent mTLS certificate using the configured JWT and private key
+    RenewCertificate {
+        /// Optional API base URL for renewal, e.g. http://server:4000
+        #[arg(long)]
+        api_base_url: Option<String>,
     },
     /// Configure or reconfigure service recovery actions (Windows only)
     ///
@@ -1278,6 +1285,9 @@ async fn handle_service_command(
         ServiceCommand::ConfigValidate { path } => {
             handle_config_validate(&path).await?;
         }
+        ServiceCommand::RenewCertificate { api_base_url } => {
+            handle_renew_certificate(config_path, api_base_url.as_deref()).await?;
+        }
         ServiceCommand::ConfigureRecovery {
             name,
             first_delay,
@@ -1335,6 +1345,39 @@ async fn handle_service_command(
         }
     }
 
+    Ok(())
+}
+
+async fn handle_renew_certificate(
+    config_path: &std::path::Path,
+    api_base_url: Option<&str>,
+) -> Result<()> {
+    let config = AgentConfig::from_file(config_path)
+        .with_context(|| format!("failed to load config {}", config_path.display()))?;
+    let auth_token = config
+        .auth_token
+        .as_deref()
+        .filter(|token| !token.trim().is_empty())
+        .context("auth_token is required to renew the mTLS certificate")?;
+
+    let mut cert_paths = pki::certificate_manager::CertPaths::default_paths();
+    if let Some(path) = &config.tls.cert_path {
+        cert_paths.cert_path = PathBuf::from(path);
+    }
+    if let Some(path) = &config.tls.key_path {
+        cert_paths.key_path = PathBuf::from(path);
+    }
+    if let Some(path) = &config.tls.ca_path {
+        cert_paths.ca_bundle_path = PathBuf::from(path);
+    }
+
+    let manager = pki::certificate_manager::CertificateManager::new(cert_paths);
+    let renewal_server_url = api_base_url.unwrap_or(&config.server_url);
+    manager
+        .renew_certificate_with_csr(&config.agent_id, auth_token, renewal_server_url)
+        .await?;
+
+    println!("mTLS certificate renewed for agent {}", config.agent_id);
     Ok(())
 }
 
