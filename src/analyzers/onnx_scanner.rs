@@ -288,7 +288,7 @@ impl OnnxScanner {
                 };
 
                 // Try to set intra-op parallelism.
-                let builder = match builder.with_intra_threads(2) {
+                let mut builder = match builder.with_intra_threads(2) {
                     Ok(b) => b,
                     Err(e) => {
                         error!(error = %e, "Failed to set intra-op threads");

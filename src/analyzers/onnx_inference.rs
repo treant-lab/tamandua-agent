@@ -335,7 +335,7 @@ impl OnnxInferenceEngine {
             }
         };
 
-        let builder = match builder.with_intra_threads(config.intra_threads) {
+        let mut builder = match builder.with_intra_threads(config.intra_threads) {
             Ok(b) => b,
             Err(e) => {
                 error!(error = %e, "Failed to set intra-op threads");
