@@ -5,6 +5,9 @@ use super::schedule::{
 };
 use super::RunningSchedule;
 use crate::analyzers::ml_local::LocalMLFeatureEngine;
+use crate::collectors::{
+    Detection, DetectionType, EventPayload, EventType, Severity, TelemetryEvent,
+};
 use crate::config::AgentConfig;
 use anyhow::Result;
 use chrono::Utc;
@@ -35,6 +38,8 @@ pub struct ScheduleExecutor {
     ml_feature_engine: Option<Arc<LocalMLFeatureEngine>>,
     /// Maximum file size for feature-based ML scheduled scans.
     ml_feature_max_file_size_bytes: u64,
+    /// Optional telemetry sink for scheduled-scan detections.
+    telemetry_tx: Option<mpsc::Sender<TelemetryEvent>>,
 }
 
 impl ScheduleExecutor {
@@ -46,7 +51,14 @@ impl ScheduleExecutor {
             onnx_scanner: None,
             ml_feature_engine: None,
             ml_feature_max_file_size_bytes: 0,
+            telemetry_tx: None,
         }
+    }
+
+    /// Attach a telemetry sink used to report scheduled-scan detections.
+    pub fn with_telemetry_sender(mut self, telemetry_tx: mpsc::Sender<TelemetryEvent>) -> Self {
+        self.telemetry_tx = Some(telemetry_tx);
+        self
     }
 
     /// Create a scheduler executor wired to the configured agent ML engines.
@@ -166,6 +178,7 @@ impl ScheduleExecutor {
                         self.handle_detection(
                             &file_path,
                             &result,
+                            schedule,
                             &schedule.config.detection_action,
                         )
                         .await;
@@ -377,6 +390,7 @@ impl ScheduleExecutor {
                 threat_name: String::new(),
                 severity: String::new(),
                 detection_method: String::new(),
+                confidence: None,
             });
         }
 
@@ -393,6 +407,7 @@ impl ScheduleExecutor {
                 threat_name: "Known malware hash".to_string(),
                 severity: "high".to_string(),
                 detection_method: "hash".to_string(),
+                confidence: None,
             });
         }
 
@@ -418,6 +433,7 @@ impl ScheduleExecutor {
             threat_name: String::new(),
             severity: String::new(),
             detection_method: String::new(),
+            confidence: None,
         })
     }
 
@@ -463,6 +479,7 @@ impl ScheduleExecutor {
                         threat_name: format!("ONNX ML malware: {family}"),
                         severity: severity_for_confidence(result.confidence),
                         detection_method: "ml_onnx".to_string(),
+                        confidence: Some(result.confidence),
                     }));
                 }
             }
@@ -485,6 +502,7 @@ impl ScheduleExecutor {
                         threat_name: "Feature ML malware".to_string(),
                         severity: severity_for_confidence(classification.confidence),
                         detection_method: "ml_features".to_string(),
+                        confidence: Some(classification.confidence),
                     }));
                 }
             }
@@ -520,8 +538,11 @@ impl ScheduleExecutor {
         &self,
         path: &PathBuf,
         result: &ScanFileResult,
+        schedule: &Schedule,
         action: &DetectionAction,
     ) {
+        self.emit_detection_event(path, result, schedule).await;
+
         match action {
             DetectionAction::Alert => {
                 // Just log - actual alerting handled by alert system
@@ -547,6 +568,77 @@ impl ScheduleExecutor {
                 // STUB — PRODUCTION-GAP, not production. Custom detection actions are
                 // logged only; they are never dispatched to the response executor.
             }
+        }
+    }
+
+    async fn emit_detection_event(
+        &self,
+        path: &PathBuf,
+        result: &ScanFileResult,
+        schedule: &Schedule,
+    ) {
+        let Some(tx) = &self.telemetry_tx else {
+            return;
+        };
+
+        let detection_source = if result.detection_method.starts_with("ml") {
+            "ml"
+        } else {
+            result.detection_method.as_str()
+        };
+
+        let mut event = TelemetryEvent::new(
+            EventType::MalwareDetection,
+            severity_from_string(&result.severity),
+            EventPayload::Custom(serde_json::json!({
+                "source": "scheduled_scan",
+                "detection_source": detection_source,
+                "path": path.display().to_string(),
+                "file_path": path.display().to_string(),
+                "threat_name": result.threat_name,
+                "severity": result.severity,
+                "detection_method": result.detection_method,
+                "confidence": result.confidence,
+                "schedule_id": schedule.id.to_string(),
+                "schedule_name": schedule.name,
+                "scan_type": format!("{:?}", schedule.config.scan_type),
+            })),
+        );
+
+        event
+            .metadata
+            .insert("source".to_string(), "scheduled_scan".to_string());
+        event
+            .metadata
+            .insert("provider".to_string(), "tamandua_agent".to_string());
+        event
+            .metadata
+            .insert("detection_source".to_string(), detection_source.to_string());
+        if detection_source == "ml" {
+            event
+                .metadata
+                .insert("ml_source".to_string(), result.detection_method.clone());
+        }
+
+        event.add_detection(Detection {
+            detection_type: detection_type_for_method(&result.detection_method),
+            rule_name: format!(
+                "SCHEDULED_SCAN_{}",
+                result.detection_method.to_ascii_uppercase()
+            ),
+            confidence: result.confidence.unwrap_or(1.0),
+            description: format!(
+                "Scheduled scan '{}' detected {} in {}",
+                schedule.name,
+                result.threat_name,
+                path.display()
+            ),
+            mitre_tactics: vec!["execution".to_string()],
+            mitre_techniques: vec!["T1204".to_string()],
+        });
+
+        if let Err(error) = tx.send(event).await {
+            debug!(error = %error, "Scheduled scan detection telemetry receiver is closed");
         }
     }
 
@@ -623,6 +715,7 @@ struct ScanFileResult {
     threat_name: String,
     severity: String,
     detection_method: String,
+    confidence: Option<f32>,
 }
 
 /// Calculate SHA256 hash of data
@@ -644,6 +737,25 @@ fn severity_for_confidence(confidence: f32) -> String {
         "high".to_string()
     } else {
         "medium".to_string()
+    }
+}
+
+fn severity_from_string(severity: &str) -> Severity {
+    match severity {
+        "critical" => Severity::Critical,
+        "high" => Severity::High,
+        "medium" => Severity::Medium,
+        "low" => Severity::Low,
+        _ => Severity::Info,
+    }
+}
+
+fn detection_type_for_method(method: &str) -> DetectionType {
+    match method {
+        "ml_onnx" | "ml_features" => DetectionType::Ml,
+        "hash" => DetectionType::ThreatIntel,
+        "yara" => DetectionType::Yara,
+        _ => DetectionType::Malware,
     }
 }
 

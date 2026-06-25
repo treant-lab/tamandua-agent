@@ -2436,6 +2436,7 @@ impl Agent {
 
     async fn start_scheduled_scan_manager(&self) -> Result<tokio::task::JoinHandle<()>> {
         let config = self.config.clone();
+        let client = self.client.clone();
         let storage_path = Self::scheduled_scan_storage_dir();
 
         if let Err(error) = std::fs::create_dir_all(&storage_path) {
@@ -2449,7 +2450,13 @@ impl Agent {
         }
 
         let handle = tokio::spawn(async move {
-            let scheduler = scheduler::Scheduler::new_with_config(storage_path.clone(), &config);
+            let (telemetry_tx, mut telemetry_rx) =
+                tokio::sync::mpsc::channel::<collectors::TelemetryEvent>(128);
+            let scheduler = scheduler::Scheduler::new_with_config_and_telemetry(
+                storage_path.clone(),
+                &config,
+                telemetry_tx,
+            );
 
             match scheduler.start().await {
                 Ok(()) => {
@@ -2460,7 +2467,19 @@ impl Agent {
                         skip_expensive_analysis = config.collector_tuning.skip_expensive_analysis,
                         "Scheduled scan manager started"
                     );
-                    std::future::pending::<()>().await;
+
+                    while let Some(event) = telemetry_rx.recv().await {
+                        let event_id = event.event_id.clone();
+                        if let Err(error) = client.send_telemetry(&[event]).await {
+                            warn!(
+                                error = %error,
+                                event_id = %event_id,
+                                "Failed to send scheduled scan detection telemetry"
+                            );
+                        }
+                    }
+
+                    warn!("Scheduled scan detection telemetry channel closed");
                 }
                 Err(error) => {
                     error!(

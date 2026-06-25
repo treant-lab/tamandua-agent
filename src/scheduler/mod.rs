@@ -23,6 +23,7 @@ pub use schedule::{
     ScheduleId, ScheduleRun, ScheduleRunStatus, ScheduleStatus,
 };
 
+use crate::collectors::TelemetryEvent;
 use crate::config::AgentConfig;
 use anyhow::Result;
 use chrono::{DateTime, NaiveTime, Utc, Weekday};
@@ -71,6 +72,19 @@ impl Scheduler {
         Self::with_executor(
             storage_path,
             Arc::new(ScheduleExecutor::from_config(config)),
+        )
+    }
+
+    /// Create a new scheduler with configured scanning engines and telemetry
+    /// reporting for detections found during scheduled scans.
+    pub fn new_with_config_and_telemetry(
+        storage_path: PathBuf,
+        config: &AgentConfig,
+        telemetry_tx: mpsc::Sender<TelemetryEvent>,
+    ) -> Self {
+        Self::with_executor(
+            storage_path,
+            Arc::new(ScheduleExecutor::from_config(config).with_telemetry_sender(telemetry_tx)),
         )
     }
 
