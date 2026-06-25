@@ -1884,6 +1884,10 @@ pub async fn live_response_file_upload(payload: &serde_json::Value) -> CommandRe
         .get("content")
         .and_then(|v| v.as_str())
         .unwrap_or("");
+    let create_dirs = payload
+        .get("create_dirs")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     if path.is_empty() || content_b64.is_empty() {
         return CommandResult {
@@ -1937,17 +1941,77 @@ pub async fn live_response_file_upload(payload: &serde_json::Value) -> CommandRe
         }
     }
 
-    // Validate the parent directory exists and can be canonicalized
+    // Validate the parent directory exists and can be canonicalized.  For
+    // model/rule staging, allow creating only the immediate missing parent
+    // under an already-canonical grandparent; this keeps uploads useful
+    // without turning Live Response into an arbitrary mkdir primitive.
     let parent = target.parent().unwrap_or(Path::new("."));
     let canonical_parent = match std::fs::canonicalize(parent) {
         Ok(p) => p,
         Err(e) => {
-            warn!(path = path, reason = %e, "Rejected file upload path: parent canonicalization failed");
-            return CommandResult {
-                success: false,
-                error_message: Some(format!("Parent directory validation failed: {}", e)),
-                result_data: None,
-            };
+            if create_dirs {
+                if let Some(grandparent) = parent.parent() {
+                    match std::fs::canonicalize(grandparent) {
+                        Ok(canonical_grandparent) => {
+                            if let Some(parent_name) = parent.file_name() {
+                                let created_parent = canonical_grandparent.join(parent_name);
+                                match std::fs::create_dir(&created_parent) {
+                                    Ok(()) => created_parent,
+                                    Err(create_err) => {
+                                        warn!(
+                                            path = path,
+                                            reason = %create_err,
+                                            "Rejected file upload path: parent creation failed"
+                                        );
+                                        return CommandResult {
+                                            success: false,
+                                            error_message: Some(format!(
+                                                "Parent directory creation failed: {}",
+                                                create_err
+                                            )),
+                                            result_data: None,
+                                        };
+                                    }
+                                }
+                            } else {
+                                return CommandResult {
+                                    success: false,
+                                    error_message: Some("Invalid parent directory".to_string()),
+                                    result_data: None,
+                                };
+                            }
+                        }
+                        Err(grandparent_err) => {
+                            warn!(
+                                path = path,
+                                reason = %grandparent_err,
+                                "Rejected file upload path: grandparent canonicalization failed"
+                            );
+                            return CommandResult {
+                                success: false,
+                                error_message: Some(format!(
+                                    "Parent directory validation failed: {}",
+                                    grandparent_err
+                                )),
+                                result_data: None,
+                            };
+                        }
+                    }
+                } else {
+                    return CommandResult {
+                        success: false,
+                        error_message: Some("Invalid parent directory".to_string()),
+                        result_data: None,
+                    };
+                }
+            } else {
+                warn!(path = path, reason = %e, "Rejected file upload path: parent canonicalization failed");
+                return CommandResult {
+                    success: false,
+                    error_message: Some(format!("Parent directory validation failed: {}", e)),
+                    result_data: None,
+                };
+            }
         }
     };
 
@@ -3250,6 +3314,31 @@ mod tests {
     fn test_validate_command_empty() {
         assert!(validate_command("").is_err());
         assert!(validate_command("   ").is_err());
+    }
+
+    #[tokio::test]
+    async fn test_file_upload_create_dirs_creates_immediate_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("models").join("malware_smell.onnx");
+        let content = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b"onnx");
+
+        let missing_parent_result = live_response_file_upload(&serde_json::json!({
+            "path": target.to_string_lossy(),
+            "content": content,
+            "create_dirs": false
+        }))
+        .await;
+        assert!(!missing_parent_result.success);
+
+        let content = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b"onnx");
+        let create_parent_result = live_response_file_upload(&serde_json::json!({
+            "path": target.to_string_lossy(),
+            "content": content,
+            "create_dirs": true
+        }))
+        .await;
+        assert!(create_parent_result.success);
+        assert_eq!(std::fs::read(target).unwrap(), b"onnx");
     }
 
     #[test]
