@@ -14,12 +14,17 @@ use anyhow::Result;
 use chrono::Utc;
 use parking_lot::RwLock;
 use std::collections::HashMap;
+use std::io::{Cursor, Read};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 use walkdir::WalkDir;
+
+const MAX_ARCHIVE_MEMBERS: usize = 512;
+const MAX_ARCHIVE_MEMBER_SIZE_BYTES: u64 = 100 * 1024 * 1024;
+const MAX_ARCHIVE_TOTAL_BYTES: u64 = 512 * 1024 * 1024;
 
 /// Result of a schedule execution
 #[derive(Debug)]
@@ -420,32 +425,13 @@ impl ScheduleExecutor {
         // Read file for scanning
         let contents = tokio::fs::read(path).await?;
 
-        // Calculate hash
-        let hash = sha256_hash(&contents);
-
-        if let Some(hash_match) = self.check_hash_reputation(&hash).await {
-            return Ok(ScanFileResult {
-                is_threat: true,
-                threat_name: hash_match.threat_name,
-                severity: hash_match.severity,
-                detection_method: "hash".to_string(),
-                confidence: hash_match.confidence,
-            });
-        }
-
-        // YARA scan (stub - integrate with real YARA engine)
-        if let Some(result) = self.scan_with_yara(&contents, path).await? {
-            return Ok(result);
-        }
-
-        // ML scan (stub - integrate with real ML engine)
-        if let Some(result) = self.scan_with_ml(&contents, path).await? {
+        if let Some(result) = self.scan_contents(&contents, path, true).await? {
             return Ok(result);
         }
 
         // Check archives if enabled
         if options.scan_archives && self.is_archive(path) {
-            if let Some(result) = self.scan_archive(path, options).await? {
+            if let Some(result) = self.scan_archive(path, &contents).await? {
                 return Ok(result);
             }
         }
@@ -457,6 +443,39 @@ impl ScheduleExecutor {
             detection_method: String::new(),
             confidence: None,
         })
+    }
+
+    async fn scan_contents(
+        &self,
+        contents: &[u8],
+        path: &PathBuf,
+        allow_ml: bool,
+    ) -> Result<Option<ScanFileResult>> {
+        // Calculate hash
+        let hash = sha256_hash(&contents);
+
+        if let Some(hash_match) = self.check_hash_reputation(&hash).await {
+            return Ok(Some(ScanFileResult {
+                is_threat: true,
+                threat_name: hash_match.threat_name,
+                severity: hash_match.severity,
+                detection_method: "hash".to_string(),
+                confidence: hash_match.confidence,
+            }));
+        }
+
+        // YARA scan
+        if let Some(result) = self.scan_with_yara(&contents, path).await? {
+            return Ok(Some(result));
+        }
+
+        if allow_ml {
+            if let Some(result) = self.scan_with_ml(&contents, path).await? {
+                return Ok(Some(result));
+            }
+        }
+
+        Ok(None)
     }
 
     /// Check hash against reputation database
@@ -717,13 +736,104 @@ impl ScheduleExecutor {
     /// Scan archive contents
     async fn scan_archive(
         &self,
-        _path: &PathBuf,
-        _options: &ScanOptions,
+        path: &PathBuf,
+        contents: &[u8],
     ) -> Result<Option<ScanFileResult>> {
-        // STUB — PRODUCTION-GAP, not production. Always returns None.
-        // Even when ScanOptions.scan_archives is enabled, archive members are never
-        // unpacked or scanned. Missing: archive extraction + recursive member scanning.
+        match archive_kind(path) {
+            Some(ArchiveKind::Zip) => self.scan_zip_archive(path, contents).await,
+            Some(ArchiveKind::Tar) => self.scan_tar_archive(path, contents).await,
+            Some(ArchiveKind::TarGz) => self.scan_targz_archive(path, contents).await,
+            Some(ArchiveKind::Gz) => self.scan_gzip_member(path, contents).await,
+            Some(ArchiveKind::Unsupported(kind)) => {
+                debug!(
+                    path = %path.display(),
+                    kind,
+                    "Scheduled scan archive format is recognized but not yet supported"
+                );
+                Ok(None)
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn scan_zip_archive(
+        &self,
+        path: &PathBuf,
+        contents: &[u8],
+    ) -> Result<Option<ScanFileResult>> {
+        let members = collect_zip_members(path, contents)?;
+        self.scan_archive_members(members).await
+    }
+
+    async fn scan_tar_archive(
+        &self,
+        path: &PathBuf,
+        contents: &[u8],
+    ) -> Result<Option<ScanFileResult>> {
+        let members = collect_tar_members(path, Cursor::new(contents))?;
+        self.scan_archive_members(members).await
+    }
+
+    async fn scan_targz_archive(
+        &self,
+        path: &PathBuf,
+        contents: &[u8],
+    ) -> Result<Option<ScanFileResult>> {
+        let decoder = flate2::read::GzDecoder::new(Cursor::new(contents));
+        let members = collect_tar_members(path, decoder)?;
+        self.scan_archive_members(members).await
+    }
+
+    async fn scan_gzip_member(
+        &self,
+        path: &PathBuf,
+        contents: &[u8],
+    ) -> Result<Option<ScanFileResult>> {
+        let mut decoder = flate2::read::GzDecoder::new(Cursor::new(contents));
+        let mut member_contents = Vec::new();
+        decoder
+            .by_ref()
+            .take(MAX_ARCHIVE_MEMBER_SIZE_BYTES + 1)
+            .read_to_end(&mut member_contents)?;
+        if member_contents.len() as u64 > MAX_ARCHIVE_MEMBER_SIZE_BYTES {
+            debug!(archive = %path.display(), "Skipping oversized GZIP member during scheduled scan");
+            return Ok(None);
+        }
+
+        let member_name = path
+            .file_stem()
+            .map(|stem| sanitize_archive_member_label(&stem.to_string_lossy()))
+            .unwrap_or_else(|| "gzip-member".to_string());
+        let label = archive_member_label(path, &member_name);
+        self.scan_archive_members(vec![(label, member_contents)])
+            .await
+    }
+
+    async fn scan_archive_members(
+        &self,
+        members: Vec<(String, Vec<u8>)>,
+    ) -> Result<Option<ScanFileResult>> {
+        for (label, member_contents) in members {
+            if let Some(result) = self.scan_archive_member(&member_contents, &label).await? {
+                return Ok(Some(result));
+            }
+        }
+
         Ok(None)
+    }
+
+    async fn scan_archive_member(
+        &self,
+        contents: &[u8],
+        label: &str,
+    ) -> Result<Option<ScanFileResult>> {
+        let virtual_path = PathBuf::from(label);
+        let Some(mut result) = self.scan_contents(contents, &virtual_path, false).await? else {
+            return Ok(None);
+        };
+
+        result.threat_name = format!("{} in {}", result.threat_name, label);
+        Ok(Some(result))
     }
 
     /// Handle a detection based on configured action
@@ -1012,6 +1122,169 @@ fn default_ioc_cache_path() -> PathBuf {
     {
         PathBuf::from("./cache/scheduled_scan_iocs.db")
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ArchiveKind {
+    Zip,
+    Tar,
+    TarGz,
+    Gz,
+    Unsupported(&'static str),
+}
+
+fn archive_kind(path: &PathBuf) -> Option<ArchiveKind> {
+    let file_name = path.file_name()?.to_string_lossy().to_lowercase();
+    if file_name.ends_with(".tar.gz") || file_name.ends_with(".tgz") {
+        return Some(ArchiveKind::TarGz);
+    }
+
+    match path
+        .extension()
+        .map(|ext| ext.to_string_lossy().to_lowercase())
+        .as_deref()
+    {
+        Some("zip") => Some(ArchiveKind::Zip),
+        Some("tar") => Some(ArchiveKind::Tar),
+        Some("gz") => Some(ArchiveKind::Gz),
+        Some("7z") => Some(ArchiveKind::Unsupported("7z")),
+        Some("rar") => Some(ArchiveKind::Unsupported("rar")),
+        Some("bz2") => Some(ArchiveKind::Unsupported("bz2")),
+        _ => None,
+    }
+}
+
+fn archive_member_label(archive_path: &PathBuf, member_name: &str) -> String {
+    format!("{}::{}", archive_path.display(), member_name)
+}
+
+fn sanitize_archive_member_label(member_name: &str) -> String {
+    let sanitized = member_name
+        .replace('\\', "/")
+        .split('/')
+        .filter(|part| {
+            !part.is_empty()
+                && *part != "."
+                && *part != ".."
+                && !part.contains(':')
+                && !part.starts_with('\0')
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+
+    if sanitized.is_empty() {
+        "archive-member".to_string()
+    } else {
+        sanitized
+            .chars()
+            .map(|ch| if ch.is_control() { '_' } else { ch })
+            .collect()
+    }
+}
+
+fn collect_zip_members(path: &PathBuf, contents: &[u8]) -> Result<Vec<(String, Vec<u8>)>> {
+    let reader = Cursor::new(contents);
+    let mut archive = zip::ZipArchive::new(reader)?;
+    let mut total_bytes = 0u64;
+    let mut members = Vec::new();
+
+    for index in 0..archive.len().min(MAX_ARCHIVE_MEMBERS) {
+        let mut member = archive.by_index(index)?;
+        if !member.is_file() {
+            continue;
+        }
+
+        let member_name = sanitize_archive_member_label(member.name());
+        if member.size() > MAX_ARCHIVE_MEMBER_SIZE_BYTES {
+            debug!(
+                archive = %path.display(),
+                member = %member_name,
+                size = member.size(),
+                "Skipping oversized ZIP member during scheduled scan"
+            );
+            continue;
+        }
+
+        let mut member_contents = Vec::new();
+        member
+            .by_ref()
+            .take(MAX_ARCHIVE_MEMBER_SIZE_BYTES + 1)
+            .read_to_end(&mut member_contents)?;
+        if member_contents.len() as u64 > MAX_ARCHIVE_MEMBER_SIZE_BYTES {
+            continue;
+        }
+
+        total_bytes = total_bytes.saturating_add(member_contents.len() as u64);
+        if total_bytes > MAX_ARCHIVE_TOTAL_BYTES {
+            debug!(
+                archive = %path.display(),
+                "Stopping ZIP scan after decompressed byte limit"
+            );
+            break;
+        }
+
+        members.push((archive_member_label(path, &member_name), member_contents));
+    }
+
+    Ok(members)
+}
+
+fn collect_tar_members<R: Read>(path: &PathBuf, reader: R) -> Result<Vec<(String, Vec<u8>)>> {
+    let mut archive = tar::Archive::new(reader);
+    let mut total_bytes = 0u64;
+    let mut members_scanned = 0usize;
+    let mut members = Vec::new();
+
+    for entry_result in archive.entries()? {
+        if members_scanned >= MAX_ARCHIVE_MEMBERS {
+            break;
+        }
+
+        let mut entry = entry_result?;
+        if !entry.header().entry_type().is_file() {
+            continue;
+        }
+
+        let size = entry.header().size().unwrap_or(0);
+        let member_name = entry
+            .path()
+            .ok()
+            .map(|p| sanitize_archive_member_label(&p.to_string_lossy()))
+            .unwrap_or_else(|| format!("member-{members_scanned}"));
+
+        if size > MAX_ARCHIVE_MEMBER_SIZE_BYTES {
+            debug!(
+                archive = %path.display(),
+                member = %member_name,
+                size,
+                "Skipping oversized TAR member during scheduled scan"
+            );
+            continue;
+        }
+
+        let mut member_contents = Vec::new();
+        entry
+            .by_ref()
+            .take(MAX_ARCHIVE_MEMBER_SIZE_BYTES + 1)
+            .read_to_end(&mut member_contents)?;
+        if member_contents.len() as u64 > MAX_ARCHIVE_MEMBER_SIZE_BYTES {
+            continue;
+        }
+
+        members_scanned += 1;
+        total_bytes = total_bytes.saturating_add(member_contents.len() as u64);
+        if total_bytes > MAX_ARCHIVE_TOTAL_BYTES {
+            debug!(
+                archive = %path.display(),
+                "Stopping TAR scan after decompressed byte limit"
+            );
+            break;
+        }
+
+        members.push((archive_member_label(path, &member_name), member_contents));
+    }
+
+    Ok(members)
 }
 
 #[cfg(feature = "yara")]
