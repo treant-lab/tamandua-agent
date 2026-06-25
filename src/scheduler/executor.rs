@@ -16,6 +16,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+#[cfg(feature = "yara")]
+use tracing::warn;
 use tracing::{debug, error, info};
 use walkdir::WalkDir;
 
@@ -38,6 +40,12 @@ pub struct ScheduleExecutor {
     ml_feature_engine: Option<Arc<LocalMLFeatureEngine>>,
     /// Maximum file size for feature-based ML scheduled scans.
     ml_feature_max_file_size_bytes: u64,
+    /// Lazily loaded YARA scanner used by scheduled scans.
+    #[cfg(feature = "yara")]
+    yara_scanner: tokio::sync::OnceCell<Option<Arc<crate::analyzers::yara::YaraScanner>>>,
+    /// Local directory containing `.yar`/`.yara` files for scheduled scans.
+    #[cfg(feature = "yara")]
+    yara_rules_dir: Option<String>,
     /// Optional telemetry sink for scheduled-scan detections.
     telemetry_tx: Option<mpsc::Sender<TelemetryEvent>>,
 }
@@ -51,6 +59,10 @@ impl ScheduleExecutor {
             onnx_scanner: None,
             ml_feature_engine: None,
             ml_feature_max_file_size_bytes: 0,
+            #[cfg(feature = "yara")]
+            yara_scanner: tokio::sync::OnceCell::new(),
+            #[cfg(feature = "yara")]
+            yara_rules_dir: None,
             telemetry_tx: None,
         }
     }
@@ -87,6 +99,11 @@ impl ScheduleExecutor {
                 executor.ml_feature_max_file_size_bytes =
                     config.ml_local.max_file_size_mb * 1024 * 1024;
             }
+        }
+
+        #[cfg(feature = "yara")]
+        if !config.offline_detection.yara_rules_dir.trim().is_empty() {
+            executor.yara_rules_dir = Some(config.offline_detection.yara_rules_dir.clone());
         }
 
         executor
@@ -449,14 +466,80 @@ impl ScheduleExecutor {
     /// Scan with YARA rules
     async fn scan_with_yara(
         &self,
-        _contents: &[u8],
+        contents: &[u8],
         _path: &PathBuf,
     ) -> Result<Option<ScanFileResult>> {
-        // STUB — PRODUCTION-GAP, not production. Always returns None (no detection).
-        // Reached by the scheduled-scan loop via scan_file(); YARA scanning is silently
-        // disabled here even though a real YARA engine exists elsewhere in the agent.
-        // Missing: wiring this code path to the agent's YARA scanner.
+        #[cfg(feature = "yara")]
+        {
+            let scanner = self
+                .yara_scanner
+                .get_or_init(|| async { self.load_yara_scanner().await })
+                .await;
+
+            let Some(scanner) = scanner.as_ref() else {
+                return Ok(None);
+            };
+
+            let matches = scanner.scan_bytes(contents).await?;
+            if matches.is_empty() {
+                return Ok(None);
+            }
+
+            let first_match = &matches[0];
+            let threat_name = if matches.len() == 1 {
+                format!("YARA rule match: {}", first_match.rule_name)
+            } else {
+                format!(
+                    "YARA rule matches: {} (+{} more)",
+                    first_match.rule_name,
+                    matches.len() - 1
+                )
+            };
+
+            return Ok(Some(ScanFileResult {
+                is_threat: true,
+                threat_name,
+                severity: if matches.len() >= 2 {
+                    "critical".to_string()
+                } else {
+                    "high".to_string()
+                },
+                detection_method: "yara".to_string(),
+                confidence: Some(0.95),
+            }));
+        }
+
+        #[cfg(not(feature = "yara"))]
+        {
+            let _ = contents;
+        }
+
         Ok(None)
+    }
+
+    #[cfg(feature = "yara")]
+    async fn load_yara_scanner(&self) -> Option<Arc<crate::analyzers::yara::YaraScanner>> {
+        let Some(rules_dir) = self.yara_rules_dir.as_deref() else {
+            return None;
+        };
+
+        let rule_files = load_yara_rule_files(rules_dir);
+        if rule_files.is_empty() {
+            info!(dir = %rules_dir, "No YARA rule files found for scheduled scans");
+            return None;
+        }
+
+        let scanner = Arc::new(crate::analyzers::yara::YaraScanner::new());
+        match scanner.load_rules(rule_files).await {
+            Ok(count) => {
+                info!(count, dir = %rules_dir, "Loaded YARA rules for scheduled scans");
+                Some(scanner)
+            }
+            Err(error) => {
+                warn!(error = %error, dir = %rules_dir, "Failed to load YARA rules for scheduled scans");
+                None
+            }
+        }
     }
 
     /// Scan with ML model
@@ -757,6 +840,51 @@ fn detection_type_for_method(method: &str) -> DetectionType {
         "yara" => DetectionType::Yara,
         _ => DetectionType::Malware,
     }
+}
+
+#[cfg(feature = "yara")]
+fn load_yara_rule_files(rules_dir: &str) -> Vec<(String, String)> {
+    let rules_path = std::path::Path::new(rules_dir);
+    if !rules_path.is_dir() {
+        info!(dir = %rules_dir, "YARA rules directory does not exist for scheduled scans");
+        return Vec::new();
+    }
+
+    let mut rule_files = Vec::new();
+    let Ok(entries) = std::fs::read_dir(rules_path) else {
+        warn!(dir = %rules_dir, "Failed to read YARA rules directory for scheduled scans");
+        return rule_files;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let ext = path
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        if ext != "yar" && ext != "yara" {
+            continue;
+        }
+
+        match std::fs::read_to_string(&path) {
+            Ok(content) => {
+                let name = path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.display().to_string());
+                rule_files.push((name, content));
+            }
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    path = %path.display(),
+                    "Failed to read YARA rule file for scheduled scans"
+                );
+            }
+        }
+    }
+
+    rule_files
 }
 
 #[cfg(test)]
