@@ -2374,7 +2374,7 @@ impl Agent {
         let handle = tokio::spawn(async move {
             while let Some(tamper_event) = tamper_rx.recv().await {
                 // Convert tamper event to telemetry event
-                let telemetry_event = collectors::TelemetryEvent::new(
+                let mut telemetry_event = collectors::TelemetryEvent::new(
                     collectors::EventType::ResponseAction,
                     match tamper_event.severity {
                         protection::TamperSeverity::Low => collectors::Severity::Low,
@@ -2392,6 +2392,18 @@ impl Agent {
                         "provider": "tamandua_agent",
                     })),
                 );
+                telemetry_event.add_detection(collectors::Detection {
+                    detection_type: collectors::DetectionType::DefenseEvasion,
+                    rule_name: format!("AGENT_PROTECTION_{:?}", tamper_event.event_type),
+                    confidence: 1.0,
+                    description: tamper_event.description.clone(),
+                    mitre_tactics: vec!["Defense Evasion".to_string()],
+                    mitre_techniques: tamper_event
+                        .mitre_technique
+                        .clone()
+                        .map(|technique| vec![technique])
+                        .unwrap_or_else(|| vec!["T1562.001".to_string()]),
+                });
 
                 warn!(
                     tamper_type = ?tamper_event.event_type,

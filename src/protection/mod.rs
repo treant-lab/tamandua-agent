@@ -300,6 +300,91 @@ fn tamandua_data_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData\Tamandua"))
 }
 
+/// Critical local agent assets that must be monitored for tampering.
+///
+/// Keep this list aligned with the updater/config paths used by `main.rs` and
+/// the model/rule updater. Existing files are hashed and monitored; directories
+/// are expanded by the file guard for per-file monitoring.
+pub fn critical_agent_paths() -> Vec<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        let data = tamandua_data_dir();
+        return vec![
+            data.join("config").join("agent.toml"),
+            data.join("config.toml"),
+            data.join("rules"),
+            data.join("rules").join("yara"),
+            data.join("rules").join("sigma"),
+            data.join("models"),
+            data.join("iocs.json"),
+            data.join("schedules"),
+            data.join("cert.pem"),
+            data.join("key.pem"),
+            data.join("ca.pem"),
+            PathBuf::from(r"C:\Program Files\Tamandua\tamandua-agent.exe"),
+            PathBuf::from(r"C:\Program Files\Tamandua\tamandua-driver.sys"),
+        ];
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        return vec![
+            PathBuf::from("/etc/tamandua/agent.toml"),
+            PathBuf::from("/etc/tamandua/config.toml"),
+            PathBuf::from("/etc/tamandua/rules"),
+            PathBuf::from("/etc/tamandua/rules/yara"),
+            PathBuf::from("/etc/tamandua/rules/sigma"),
+            PathBuf::from("/etc/tamandua/iocs.json"),
+            PathBuf::from("/etc/tamandua/cert.pem"),
+            PathBuf::from("/etc/tamandua/key.pem"),
+            PathBuf::from("/etc/tamandua/ca.pem"),
+            PathBuf::from("/var/lib/tamandua/iocs.json"),
+            PathBuf::from("/var/lib/tamandua/models"),
+            PathBuf::from("/var/lib/tamandua/rules"),
+            PathBuf::from("/var/lib/tamandua/schedules"),
+            PathBuf::from("/usr/bin/tamandua-agent"),
+            PathBuf::from("/lib/systemd/system/tamandua.service"),
+            PathBuf::from("/etc/systemd/system/tamandua.service"),
+        ];
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let base = PathBuf::from("/Library/Application Support/Tamandua");
+        return vec![
+            base.join("config").join("agent.toml"),
+            base.join("config.toml"),
+            base.join("rules"),
+            base.join("rules").join("yara"),
+            base.join("rules").join("sigma"),
+            base.join("models"),
+            base.join("iocs.json"),
+            base.join("schedules"),
+            base.join("cert.pem"),
+            base.join("key.pem"),
+            base.join("ca.pem"),
+            PathBuf::from("/usr/local/bin/tamandua-agent"),
+            PathBuf::from("/Library/LaunchDaemons/com.tamandua.agent.plist"),
+            // Legacy path kept for upgraded early-alpha installs.
+            PathBuf::from("/Library/Tamandua/config.toml"),
+            PathBuf::from("/Library/Tamandua/iocs.json"),
+            PathBuf::from("/Library/Tamandua/rules"),
+        ];
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    {
+        vec![
+            PathBuf::from("./config/agent.toml"),
+            PathBuf::from("./config.toml"),
+            PathBuf::from("./rules"),
+            PathBuf::from("./models"),
+            PathBuf::from("./iocs.json"),
+            PathBuf::from("./schedules"),
+        ]
+    }
+}
+
 /// Protection status and statistics
 #[derive(Debug, Clone, Default)]
 pub struct ProtectionStatus {
@@ -440,6 +525,8 @@ pub struct ProtectionEngine {
     cert_pins: Vec<Vec<u8>>,
     /// Service restart attempt counter (for exponential backoff)
     restart_attempts: Arc<AtomicU64>,
+    /// File guard for critical agent assets and local configuration.
+    file_guard: Option<FileGuard>,
 }
 
 impl ProtectionEngine {
@@ -451,14 +538,11 @@ impl ProtectionEngine {
     ) -> Result<Self> {
         let agent_path = std::env::current_exe()?;
 
-        // Determine config paths based on platform
-        let config_paths = Self::get_config_paths();
-
         Ok(Self {
             status: Arc::new(RwLock::new(ProtectionStatus::default())),
             config: ProtectionConfig::default(),
             agent_path,
-            config_paths,
+            config_paths: critical_agent_paths(),
             file_hashes: Arc::new(RwLock::new(std::collections::HashMap::new())),
             #[cfg(target_os = "windows")]
             section_hashes: Arc::new(RwLock::new(std::collections::HashMap::new())),
@@ -470,27 +554,8 @@ impl ProtectionEngine {
             backup_servers,
             cert_pins,
             restart_attempts: Arc::new(AtomicU64::new(0)),
+            file_guard: None,
         })
-    }
-
-    fn get_config_paths() -> Vec<PathBuf> {
-        #[cfg(windows)]
-        {
-            vec![
-                tamandua_data_dir().join("config.toml"),
-                tamandua_data_dir().join("rules"),
-                tamandua_data_dir().join("iocs.json"),
-            ]
-        }
-
-        #[cfg(not(windows))]
-        {
-            vec![
-                PathBuf::from("/etc/tamandua/config.toml"),
-                PathBuf::from("/var/lib/tamandua/rules"),
-                PathBuf::from("/etc/tamandua/iocs.json"),
-            ]
-        }
     }
 
     /// Initialize all protection mechanisms
@@ -3156,6 +3221,23 @@ pub async fn engage_protection(
     // Initialize ProtectionEngine
     let mut engine = ProtectionEngine::new(tamper_tx, backup_servers, cert_pins)?;
     engine.initialize().await?;
+
+    let mut file_guard = FileGuard::new(FileGuardConfig::default(), agent_protection_tx.clone());
+    match file_guard.initialize().await {
+        Ok(()) => {
+            info!(
+                count = file_guard.get_protected_files().len(),
+                "FileGuard initialized for critical agent assets"
+            );
+            engine.file_guard = Some(file_guard);
+        }
+        Err(error) => {
+            warn!(
+                error = %error,
+                "Failed to initialize FileGuard - continuing with ProtectionEngine integrity checks"
+            );
+        }
+    }
 
     // Check for existing hooks
     let hook_events = detect_inline_hooks();

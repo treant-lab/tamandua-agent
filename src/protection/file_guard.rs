@@ -80,13 +80,14 @@ impl FileGuard {
         // Add any additional files from config
         self.protected_files
             .extend(self.config.additional_protected_files.clone());
+        self.protected_files = expand_existing_protected_paths(&self.protected_files);
 
         // Calculate initial hashes for integrity verification
         self.calculate_file_hashes().await?;
 
         // Apply platform-specific protections
         for file in &self.protected_files.clone() {
-            if file.exists() {
+            if file.is_file() {
                 if let Err(e) = self.protect_file(file).await {
                     warn!("Failed to protect file {}: {}", file.display(), e);
                 }
@@ -110,46 +111,7 @@ impl FileGuard {
             files.push(exe);
         }
 
-        #[cfg(windows)]
-        {
-            files.extend(vec![
-                PathBuf::from("C:\\Program Files\\Tamandua\\tamandua-agent.exe"),
-                PathBuf::from("C:\\Program Files\\Tamandua\\tamandua-driver.sys"),
-                PathBuf::from("C:\\ProgramData\\Tamandua\\config.toml"),
-                PathBuf::from("C:\\ProgramData\\Tamandua\\rules\\yara"),
-                PathBuf::from("C:\\ProgramData\\Tamandua\\rules\\sigma"),
-                PathBuf::from("C:\\ProgramData\\Tamandua\\iocs.json"),
-                PathBuf::from("C:\\ProgramData\\Tamandua\\cert.pem"),
-                PathBuf::from("C:\\ProgramData\\Tamandua\\key.pem"),
-            ]);
-        }
-
-        #[cfg(target_os = "linux")]
-        {
-            files.extend(vec![
-                PathBuf::from("/usr/bin/tamandua-agent"),
-                PathBuf::from("/etc/tamandua/config.toml"),
-                PathBuf::from("/etc/tamandua/rules/yara"),
-                PathBuf::from("/etc/tamandua/rules/sigma"),
-                PathBuf::from("/etc/tamandua/iocs.json"),
-                PathBuf::from("/etc/tamandua/cert.pem"),
-                PathBuf::from("/etc/tamandua/key.pem"),
-                PathBuf::from("/var/lib/tamandua"),
-                PathBuf::from("/lib/systemd/system/tamandua.service"),
-            ]);
-        }
-
-        #[cfg(target_os = "macos")]
-        {
-            files.extend(vec![
-                PathBuf::from("/usr/local/bin/tamandua-agent"),
-                PathBuf::from("/Library/Tamandua/config.toml"),
-                PathBuf::from("/Library/Tamandua/rules/yara"),
-                PathBuf::from("/Library/Tamandua/rules/sigma"),
-                PathBuf::from("/Library/Tamandua/iocs.json"),
-                PathBuf::from("/Library/LaunchDaemons/com.tamandua.agent.plist"),
-            ]);
-        }
+        files.extend(crate::protection::critical_agent_paths());
 
         files
     }
@@ -510,6 +472,31 @@ impl FileGuard {
         self.running.store(false, Ordering::SeqCst);
         info!("File guard shutdown");
     }
+}
+
+fn expand_existing_protected_paths(paths: &[PathBuf]) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+
+    for path in paths {
+        if path.is_file() {
+            files.push(path.clone());
+        } else if path.is_dir() {
+            for entry in walkdir::WalkDir::new(path)
+                .follow_links(false)
+                .max_depth(8)
+                .into_iter()
+                .filter_map(|entry| entry.ok())
+            {
+                if entry.file_type().is_file() {
+                    files.push(entry.into_path());
+                }
+            }
+        }
+    }
+
+    files.sort();
+    files.dedup();
+    files
 }
 
 /// File guard status
