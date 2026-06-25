@@ -63,6 +63,11 @@ struct Args {
     /// Optional JSON report path.
     #[arg(long)]
     output: Option<PathBuf>,
+
+    /// Optional run identifier appended to reported telemetry fields to avoid
+    /// alert deduplication during socket proof runs.
+    #[arg(long)]
+    run_id: Option<String>,
 }
 
 #[cfg(feature = "onnx")]
@@ -114,10 +119,11 @@ async fn main() -> Result<()> {
         let event = build_ml_event(
             &args.sample,
             &model_path,
-            &sample_sha256,
-            &result,
-            args.threshold,
-        );
+        &sample_sha256,
+        &result,
+        args.threshold,
+        args.run_id.as_deref(),
+    );
         let client = BackendClient::new(&config, None).await?;
         client.connect().await?;
 
@@ -145,6 +151,7 @@ async fn main() -> Result<()> {
         family_index: result.family_index,
         inference_time_ms: result.inference_time_ms,
         telemetry_sent: sent,
+        run_id: args.run_id,
     };
 
     if let Some(output) = &args.output {
@@ -177,6 +184,7 @@ fn build_ml_event(
     sample_sha256: &str,
     result: &ScanResult,
     threshold: f32,
+    run_id: Option<&str>,
 ) -> TelemetryEvent {
     let family = result
         .family
@@ -190,13 +198,26 @@ fn build_ml_event(
         Severity::Medium
     };
 
+    let reported_path = match run_id {
+        Some(run_id) if !run_id.trim().is_empty() => {
+            format!("{}#{}", sample.display(), run_id.trim())
+        }
+        _ => sample.display().to_string(),
+    };
+    let rule_suffix = match run_id {
+        Some(run_id) if !run_id.trim().is_empty() => {
+            format!("_{}", run_id.trim().to_ascii_uppercase().replace('-', "_"))
+        }
+        _ => String::new(),
+    };
+
     let mut event = TelemetryEvent::new(
         EventType::RansomwareDetected,
         severity,
         EventPayload::Custom(serde_json::json!({
             "detection_source": "ml",
-            "path": sample.display().to_string(),
-            "file_path": sample.display().to_string(),
+            "path": reported_path,
+            "file_path": reported_path,
             "sha256": sample_sha256,
             "ml_verdict": family,
             "model_version": model.file_name().and_then(|name| name.to_str()).unwrap_or("onnx"),
@@ -204,6 +225,7 @@ fn build_ml_event(
             "threshold": threshold,
             "family_index": result.family_index,
             "inference_time_ms": result.inference_time_ms,
+            "run_id": run_id,
         })),
     );
 
@@ -218,11 +240,11 @@ fn build_ml_event(
         .insert("provider".to_string(), "tamandua_agent".to_string());
     event.add_detection(Detection {
         detection_type: DetectionType::Ml,
-        rule_name: format!("ML_MALWARE_{}", family.to_ascii_uppercase()),
+        rule_name: format!("ML_MALWARE_{}{}", family.to_ascii_uppercase(), rule_suffix),
         confidence: result.confidence,
         description: format!(
             "Local ONNX ML classified {} as {}",
-            sample.display(),
+            reported_path,
             family
         ),
         mitre_tactics: vec!["execution".to_string()],
@@ -272,4 +294,5 @@ struct SmokeReport {
     family_index: usize,
     inference_time_ms: u64,
     telemetry_sent: bool,
+    run_id: Option<String>,
 }
