@@ -314,9 +314,8 @@ config.heartbeat_timeout = Duration::from_secs(180);
 
 ## Documentation
 
-- [SANS_IO_ARCHITECTURE.md](../../../../docs/apps/tamandua_agent/SANS_IO_ARCHITECTURE.md) - Detailed architecture
-- [SANS_IO_QUICKSTART.md](../../../../docs/apps/tamandua_agent/SANS_IO_QUICKSTART.md) - Quick start guide
-- [SANS_IO_IMPLEMENTATION_SUMMARY.md](../../../../docs/apps/tamandua_agent/SANS_IO_IMPLEMENTATION_SUMMARY.md) - Implementation details
+This README is the public Sans-IO transport overview for this mirror. Extended monorepo
+implementation notes are not mirrored until they pass release review.
 
 ## References
 

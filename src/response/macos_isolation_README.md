@@ -426,10 +426,8 @@ Agent responds with `IsolationStatus`:
 
 ## Documentation
 
-### Full Documentation
-
-- [macOS Network Isolation](../../../../docs/MACOS_NETWORK_ISOLATION.md)
-- [Network Isolation Quick Reference](../../../../docs/NETWORK_ISOLATION_QUICK_REFERENCE.md)
+This mirror keeps the public module notes in this README. Extended operational runbooks
+for network isolation are published only after release review.
 
 ### Related Modules
 
