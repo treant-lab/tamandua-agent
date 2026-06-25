@@ -119,11 +119,11 @@ async fn main() -> Result<()> {
         let event = build_ml_event(
             &args.sample,
             &model_path,
-        &sample_sha256,
-        &result,
-        args.threshold,
-        args.run_id.as_deref(),
-    );
+            &sample_sha256,
+            &result,
+            args.threshold,
+            args.run_id.as_deref(),
+        );
         let client = BackendClient::new(&config, None).await?;
         client.connect().await?;
 
@@ -242,11 +242,7 @@ fn build_ml_event(
         detection_type: DetectionType::Ml,
         rule_name: format!("ML_MALWARE_{}{}", family.to_ascii_uppercase(), rule_suffix),
         confidence: result.confidence,
-        description: format!(
-            "Local ONNX ML classified {} as {}",
-            reported_path,
-            family
-        ),
+        description: format!("Local ONNX ML classified {} as {}", reported_path, family),
         mitre_tactics: vec!["execution".to_string()],
         mitre_techniques: vec!["T1204".to_string()],
     });
