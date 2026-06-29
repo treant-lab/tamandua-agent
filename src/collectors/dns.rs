@@ -212,6 +212,7 @@ mod tests {
             query: "Example.COM.".to_string(),
             query_type: "A".to_string(),
             responses: vec!["203.0.113.10".to_string(), "alias.example.com".to_string()],
+            ..Default::default()
         });
 
         assert_eq!(
@@ -240,6 +241,7 @@ mod tests {
                 query: format!("host-{}.example.", index),
                 query_type: "AAAA".to_string(),
                 responses: Vec::new(),
+                ..Default::default()
             });
         }
 
@@ -539,6 +541,11 @@ impl DnsCollector {
                         query: query_name,
                         query_type,
                         responses: vec![],
+                        resolver_ip: Some(dst_ip.to_string()),
+                        resolver_port: Some(dst_port),
+                        transport: Some("udp".to_string()),
+                        capture_method: Some("raw_socket".to_string()),
+                        ..Default::default()
                     }),
                 );
 
@@ -790,6 +797,9 @@ impl DnsCollector {
                         query: domain.to_string(),
                         query_type: qtype.to_string(),
                         responses: vec![],
+                        transport: Some("udp".to_string()),
+                        capture_method: Some("tcpdump".to_string()),
+                        ..Default::default()
                     }),
                 ));
             }
@@ -925,6 +935,8 @@ impl DnsCollector {
                     query: domain.to_string(),
                     query_type: qtype.to_string(),
                     responses: vec![],
+                    capture_method: Some("systemd_resolved_journal".to_string()),
+                    ..Default::default()
                 }),
             ));
         }
@@ -1185,6 +1197,8 @@ impl DnsCollector {
                         query,
                         query_type,
                         responses,
+                        capture_method: Some("pcap".to_string()),
+                        ..Default::default()
                     }),
                 ));
             }
@@ -1779,6 +1793,8 @@ impl DnsCollector {
                                     query: query_name.to_string(),
                                     query_type: qt.to_string(),
                                     responses,
+                                    capture_method: Some("windows_dns_client".to_string()),
+                                    ..Default::default()
                                 }),
                             );
 
@@ -1881,6 +1897,8 @@ impl DnsCollector {
                                         current_type.clone()
                                     },
                                     responses: current_responses.clone(),
+                                    capture_method: Some("windows_dns_cache".to_string()),
+                                    ..Default::default()
                                 }),
                             );
 
@@ -1922,6 +1940,8 @@ impl DnsCollector {
                                     current_type
                                 },
                                 responses: current_responses,
+                                capture_method: Some("windows_dns_cache".to_string()),
+                                ..Default::default()
                             }),
                         );
 
@@ -2302,6 +2322,8 @@ mod dns_macos {
                 query: domain,
                 query_type,
                 responses,
+                capture_method: Some("macos_unified_log".to_string()),
+                ..Default::default()
             }),
         ))
     }
@@ -3117,6 +3139,9 @@ mod dns_macos {
         } else {
             (0, String::new())
         };
+        let resolver_ip = if is_response { src_ip } else { dst_ip };
+        let resolver_port = if is_response { src_port } else { dst_port };
+        let rcode_payload = rcode_label.map(str::to_string);
 
         let mut event = TelemetryEvent::new(
             EventType::DnsQuery,
@@ -3127,14 +3152,18 @@ mod dns_macos {
                 query: query_name,
                 query_type: query_type.to_string(),
                 responses,
+                resolver_ip: Some(resolver_ip.to_string()),
+                resolver_port: Some(resolver_port),
+                transport: Some("udp".to_string()),
+                capture_method: Some("bpf".to_string()),
+                rcode: rcode_payload.clone(),
+                ..Default::default()
             }),
         );
 
         // Attach rcode metadata
-        if let Some(rcode_str) = rcode_label {
-            event
-                .metadata
-                .insert("dns_rcode".to_string(), rcode_str.to_string());
+        if let Some(rcode_str) = rcode_payload {
+            event.metadata.insert("dns_rcode".to_string(), rcode_str);
         }
         event
             .metadata
@@ -3512,6 +3541,11 @@ mod dns_macos {
                                             query: format!("dns-server:{}", dns_server),
                                             query_type: "A".to_string(),
                                             responses: vec![],
+                                            resolver_ip: Some(dns_server.to_string()),
+                                            resolver_port: Some(53),
+                                            transport: Some("udp".to_string()),
+                                            capture_method: Some("macos_lsof".to_string()),
+                                            ..Default::default()
                                         }),
                                     );
 
@@ -4171,6 +4205,7 @@ mod dns_etw {
             Some("NXDOMAIN") | Some("SERVFAIL") => Severity::Low,
             _ => Severity::Info,
         };
+        let rcode_payload = rcode_str.map(str::to_string);
 
         let mut event = TelemetryEvent::new(
             EventType::DnsQuery,
@@ -4181,14 +4216,15 @@ mod dns_etw {
                 query,
                 query_type: query_type_str.to_string(),
                 responses,
+                capture_method: Some("windows_dns_etw".to_string()),
+                rcode: rcode_payload.clone(),
+                ..Default::default()
             }),
         );
 
         // Attach metadata for downstream detection
-        if let Some(rcode) = rcode_str {
-            event
-                .metadata
-                .insert("dns_rcode".to_string(), rcode.to_string());
+        if let Some(rcode) = rcode_payload {
+            event.metadata.insert("dns_rcode".to_string(), rcode);
         }
         event
             .metadata

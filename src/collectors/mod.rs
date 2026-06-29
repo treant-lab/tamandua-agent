@@ -784,6 +784,36 @@ pub struct NetworkEvent {
     /// JA3S server TLS fingerprint when packet data is available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ja3s: Option<String>,
+    /// First ALPN protocol from TLS/QUIC handshake metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alpn: Option<String>,
+    /// Full ALPN protocol list when observed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub alpn_protocols: Vec<String>,
+    /// TLS cipher suite when observed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cipher_suite: Option<String>,
+    /// TLS extension identifiers/names when observed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tls_extensions: Vec<String>,
+    /// True when encrypted client hello or equivalent hidden-SNI signal is observed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ech_present: Option<bool>,
+    /// QUIC version from long-header metadata when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quic_version: Option<String>,
+    /// True when the connection is identified as QUIC.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_quic: Option<bool>,
+    /// Application HTTP version inferred from ALPN/protocol metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_version: Option<String>,
+    /// Metadata-based DNS privacy transport classification: doh, dot, or doq.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encrypted_dns_transport: Option<String>,
+    /// DNS resolver address when it is known from packet/OS metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dns_resolver: Option<String>,
     /// Parsed certificate metadata when it can be extracted from TLS traffic.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub certificate: Option<serde_json::Value>,
@@ -821,12 +851,78 @@ impl NetworkEvent {
             self.tls_sni = self.sni.clone();
         }
 
+        if self.alpn.is_none() {
+            self.alpn = self.alpn_protocols.first().cloned();
+        }
+
+        if self.quic_version.is_some() || self.protocol.eq_ignore_ascii_case("quic") {
+            self.is_quic = Some(true);
+            self.is_encrypted = Some(true);
+            if self.protocol.eq_ignore_ascii_case("udp") {
+                self.protocol = "quic".to_string();
+            }
+        }
+
+        if self.http_version.is_none() {
+            self.http_version = infer_http_version(self.alpn.as_deref(), &self.alpn_protocols);
+        }
+
+        if self.encrypted_dns_transport.is_none() {
+            self.encrypted_dns_transport = infer_encrypted_dns_transport(
+                self.remote_port,
+                self.alpn.as_deref(),
+                &self.alpn_protocols,
+                self.sni.as_deref().or(self.tls_sni.as_deref()),
+                self.is_quic.unwrap_or(false),
+            );
+        }
+
+        if self.encrypted_dns_transport.is_some()
+            || self.remote_port == 443
+            || self.remote_port == 853
+            || self.remote_port == 784
+            || self.remote_port == 8853
+        {
+            self.is_encrypted.get_or_insert(true);
+        }
+
         if self.enrichment.is_none() {
             let mut enrichment = serde_json::Map::new();
             if !self.domain_candidates.is_empty() {
                 enrichment.insert(
                     "domain_source".to_string(),
                     serde_json::Value::String("recent_dns_cache".to_string()),
+                );
+            }
+            let mut encrypted_metadata = serde_json::Map::new();
+            insert_opt_string(&mut encrypted_metadata, "alpn", &self.alpn);
+            if !self.alpn_protocols.is_empty() {
+                encrypted_metadata.insert(
+                    "alpn_protocols".to_string(),
+                    serde_json::json!(self.alpn_protocols),
+                );
+            }
+            insert_opt_string(&mut encrypted_metadata, "cipher_suite", &self.cipher_suite);
+            if !self.tls_extensions.is_empty() {
+                encrypted_metadata.insert(
+                    "tls_extensions".to_string(),
+                    serde_json::json!(self.tls_extensions),
+                );
+            }
+            insert_opt_bool(&mut encrypted_metadata, "ech_present", self.ech_present);
+            insert_opt_string(&mut encrypted_metadata, "quic_version", &self.quic_version);
+            insert_opt_bool(&mut encrypted_metadata, "is_quic", self.is_quic);
+            insert_opt_string(&mut encrypted_metadata, "http_version", &self.http_version);
+            insert_opt_string(
+                &mut encrypted_metadata,
+                "encrypted_dns_transport",
+                &self.encrypted_dns_transport,
+            );
+            insert_opt_string(&mut encrypted_metadata, "dns_resolver", &self.dns_resolver);
+            if !encrypted_metadata.is_empty() {
+                enrichment.insert(
+                    "encrypted_metadata".to_string(),
+                    serde_json::Value::Object(encrypted_metadata),
                 );
             }
             if !enrichment.is_empty() {
@@ -836,14 +932,100 @@ impl NetworkEvent {
     }
 }
 
+fn infer_http_version(alpn: Option<&str>, alpn_protocols: &[String]) -> Option<String> {
+    let values = alpn_values(alpn, alpn_protocols);
+    if values.iter().any(|value| value.starts_with("h3")) {
+        Some("3".to_string())
+    } else if values.iter().any(|value| value == "h2") {
+        Some("2".to_string())
+    } else if values.iter().any(|value| value == "http/1.1") {
+        Some("1.1".to_string())
+    } else {
+        None
+    }
+}
+
+fn infer_encrypted_dns_transport(
+    remote_port: u16,
+    alpn: Option<&str>,
+    alpn_protocols: &[String],
+    sni: Option<&str>,
+    is_quic: bool,
+) -> Option<String> {
+    let values = alpn_values(alpn, alpn_protocols);
+
+    if remote_port == 853 || values.iter().any(|value| value == "dot") {
+        Some("dot".to_string())
+    } else if remote_port == 784
+        || remote_port == 8853
+        || values.iter().any(|value| value.starts_with("doq"))
+    {
+        Some("doq".to_string())
+    } else if remote_port == 443 && resolver_sni(sni) {
+        Some(if is_quic { "doq" } else { "doh" }.to_string())
+    } else {
+        None
+    }
+}
+
+fn alpn_values(alpn: Option<&str>, alpn_protocols: &[String]) -> Vec<String> {
+    alpn.into_iter()
+        .map(str::to_string)
+        .chain(alpn_protocols.iter().cloned())
+        .map(|value| value.to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
+fn resolver_sni(sni: Option<&str>) -> bool {
+    let Some(sni) = sni else {
+        return false;
+    };
+    let normalized = sni.to_ascii_lowercase();
+    normalized.contains("dns.google")
+        || normalized.contains("cloudflare-dns.com")
+        || normalized.contains("dns.quad9.net")
+        || normalized.contains("dns.nextdns.io")
+}
+
+fn insert_opt_string(
+    map: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    value: &Option<String>,
+) {
+    if let Some(value) = value.as_ref().filter(|value| !value.is_empty()) {
+        map.insert(key.to_string(), serde_json::Value::String(value.clone()));
+    }
+}
+
+fn insert_opt_bool(
+    map: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    value: Option<bool>,
+) {
+    if let Some(value) = value {
+        map.insert(key.to_string(), serde_json::Value::Bool(value));
+    }
+}
+
 /// DNS event data
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct DnsEvent {
     pub pid: u32,
     pub process_name: String,
     pub query: String,
     pub query_type: String,
     pub responses: Vec<String>,
+    #[serde(default)]
+    pub resolver_ip: Option<String>,
+    #[serde(default)]
+    pub resolver_port: Option<u16>,
+    #[serde(default)]
+    pub transport: Option<String>,
+    #[serde(default)]
+    pub capture_method: Option<String>,
+    #[serde(default)]
+    pub rcode: Option<String>,
 }
 
 impl Serialize for DnsEvent {
@@ -859,7 +1041,24 @@ impl Serialize for DnsEvent {
             .filter(|answer| answer.parse::<std::net::IpAddr>().is_ok())
             .collect();
 
-        let mut state = serializer.serialize_struct("DnsEvent", 8)?;
+        let mut field_count = 8;
+        if self.resolver_ip.is_some() {
+            field_count += 1;
+        }
+        if self.resolver_port.is_some() {
+            field_count += 1;
+        }
+        if self.transport.is_some() {
+            field_count += 1;
+        }
+        if self.capture_method.is_some() {
+            field_count += 1;
+        }
+        if self.rcode.is_some() {
+            field_count += 1;
+        }
+
+        let mut state = serializer.serialize_struct("DnsEvent", field_count)?;
         state.serialize_field("pid", &self.pid)?;
         state.serialize_field("process_name", &self.process_name)?;
         state.serialize_field("query", &self.query)?;
@@ -868,6 +1067,21 @@ impl Serialize for DnsEvent {
         state.serialize_field("responses", &self.responses)?;
         state.serialize_field("answers", &self.responses)?;
         state.serialize_field("resolved_ips", &resolved_ips)?;
+        if let Some(resolver_ip) = &self.resolver_ip {
+            state.serialize_field("resolver_ip", resolver_ip)?;
+        }
+        if let Some(resolver_port) = self.resolver_port {
+            state.serialize_field("resolver_port", &resolver_port)?;
+        }
+        if let Some(transport) = &self.transport {
+            state.serialize_field("transport", transport)?;
+        }
+        if let Some(capture_method) = &self.capture_method {
+            state.serialize_field("capture_method", capture_method)?;
+        }
+        if let Some(rcode) = &self.rcode {
+            state.serialize_field("rcode", rcode)?;
+        }
         state.end()
     }
 }

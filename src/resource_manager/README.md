@@ -326,9 +326,7 @@ enabled = false
 
 ## See Also
 
+- [Full Documentation](https://github.com/treant-lab/tamandua/blob/main/docs/RESOURCE_BUDGETS.md)
+- [Example Config](https://github.com/treant-lab/tamandua/blob/main/config/resource_budgets_example.toml)
 - [Integration Example](./integration_example.rs)
 - [Global Resource Governor](../resource_governor.rs)
-
-Extended resource budget docs and environment-specific example configs are maintained in
-the private monorepo release materials. This mirror keeps the module-level API notes and
-code references that are safe to publish.

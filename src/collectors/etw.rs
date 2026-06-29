@@ -2910,6 +2910,8 @@ fn parse_dns_event(record: &EventRecord, _event_id: u16) -> Option<TelemetryEven
             responses: query_results
                 .map(|r| r.split(';').map(|s| s.to_string()).collect())
                 .unwrap_or_default(),
+            capture_method: Some("windows_dns_etw".to_string()),
+            ..Default::default()
         }),
     ))
 }

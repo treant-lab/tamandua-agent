@@ -9,7 +9,7 @@
 //! - CrowdStrike Falcon LogScale (HEC)
 //! - Generic Webhook
 
-use crate::collectors::{EventType, Severity, TelemetryEvent};
+use crate::collectors::{EventType, NetworkEvent, Severity, TelemetryEvent};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -806,10 +806,18 @@ impl EventFormatter {
                     "transport": n.protocol.to_lowercase(),
                     "direction": n.direction,
                 });
+                if n.is_encrypted == Some(true) {
+                    ecs["network"]["protocol"] = serde_json::json!("tls");
+                }
+                if n.is_quic == Some(true) {
+                    ecs["network"]["transport"] = serde_json::json!("udp");
+                    ecs["network"]["protocol"] = serde_json::json!("quic");
+                }
                 ecs["process"] = serde_json::json!({
                     "pid": n.pid,
                     "name": n.process_name,
                 });
+                add_tls_ecs_fields(ecs, n);
             }
             EventPayload::Dns(d) => {
                 ecs["dns"] = serde_json::json!({
@@ -2167,6 +2175,84 @@ impl SiemForwarder {
     }
 }
 
+fn add_tls_ecs_fields(ecs: &mut serde_json::Value, network: &NetworkEvent) {
+    if network.tls_version.is_none()
+        && network.ja3.is_none()
+        && network.ja3s.is_none()
+        && network.sni.is_none()
+        && network.tls_sni.is_none()
+        && network.alpn.is_none()
+        && network.cipher_suite.is_none()
+        && network.certificate.is_none()
+        && network.encrypted_dns_transport.is_none()
+        && network.quic_version.is_none()
+    {
+        return;
+    }
+
+    let mut tls = serde_json::Map::new();
+    insert_string(&mut tls, "version", network.tls_version.as_ref());
+    insert_string(&mut tls, "cipher", network.cipher_suite.as_ref());
+    insert_string(
+        &mut tls,
+        "server_name",
+        network.sni.as_ref().or(network.tls_sni.as_ref()),
+    );
+
+    if let Some(ja3) = network.ja3.as_ref() {
+        tls.insert("client".to_string(), serde_json::json!({ "ja3": ja3 }));
+    }
+
+    if network.ja3s.is_some() || network.certificate.is_some() {
+        let mut server = serde_json::Map::new();
+        insert_string(&mut server, "ja3s", network.ja3s.as_ref());
+        if let Some(certificate) = network.certificate.as_ref() {
+            server.insert("x509".to_string(), certificate.clone());
+        }
+        tls.insert("server".to_string(), serde_json::Value::Object(server));
+    }
+
+    insert_string(&mut tls, "alpn", network.alpn.as_ref());
+    if !network.alpn_protocols.is_empty() {
+        tls.insert(
+            "alpn_protocols".to_string(),
+            serde_json::json!(network.alpn_protocols),
+        );
+    }
+    if let Some(ech_present) = network.ech_present {
+        tls.insert(
+            "ech_present".to_string(),
+            serde_json::Value::Bool(ech_present),
+        );
+    }
+
+    ecs["tls"] = serde_json::Value::Object(tls);
+
+    if let Some(quic_version) = network.quic_version.as_ref() {
+        ecs["quic"] = serde_json::json!({ "version": quic_version });
+    }
+
+    if let Some(transport) = network.encrypted_dns_transport.as_ref() {
+        if !ecs.get("dns").is_some_and(serde_json::Value::is_object) {
+            ecs["dns"] = serde_json::json!({});
+        }
+        ecs["dns"]["encrypted_transport"] = serde_json::Value::String(transport.clone());
+        if let Some(resolver) = network.dns_resolver.as_ref() {
+            ecs["dns"]["resolver"] = serde_json::json!({ "ip": resolver });
+        }
+    }
+}
+
+fn insert_string(
+    map: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    value: Option<&String>,
+) {
+    if let Some(value) = value.filter(|value| !value.is_empty()) {
+        map.insert(key.to_string(), serde_json::Value::String(value.clone()));
+    }
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -2174,7 +2260,7 @@ impl SiemForwarder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collectors::{EventPayload, ProcessEvent};
+    use crate::collectors::{EventPayload, NetworkEvent, ProcessEvent};
 
     fn create_test_event() -> TelemetryEvent {
         TelemetryEvent {
@@ -2278,6 +2364,57 @@ mod tests {
         assert!(parsed.get("event").is_some());
         assert!(parsed.get("agent").is_some());
         assert!(parsed.get("process").is_some());
+    }
+
+    #[test]
+    fn test_ecs_network_tls_quic_fields() {
+        let formatter = EventFormatter::new(
+            "agent-123".to_string(),
+            "testhost".to_string(),
+            FieldMappingConfig {
+                schema: NormalizationSchema::Ecs,
+                ..Default::default()
+            },
+        );
+
+        let mut network = NetworkEvent {
+            pid: 4242,
+            process_name: "browser.exe".to_string(),
+            local_ip: "10.0.0.10".to_string(),
+            local_port: 51515,
+            remote_ip: "1.1.1.1".to_string(),
+            remote_port: 443,
+            protocol: "udp".to_string(),
+            direction: "outbound".to_string(),
+            sni: Some("cloudflare-dns.com".to_string()),
+            alpn_protocols: vec!["h3".to_string(), "doq".to_string()],
+            cipher_suite: Some("TLS_AES_128_GCM_SHA256".to_string()),
+            quic_version: Some("1".to_string()),
+            dns_resolver: Some("1.1.1.1".to_string()),
+            ..Default::default()
+        };
+        network.apply_common_enrichment();
+
+        let event = TelemetryEvent {
+            event_id: "net-123".to_string(),
+            event_type: EventType::NetworkConnect,
+            timestamp: 1700000000000,
+            severity: Severity::Medium,
+            payload: EventPayload::Network(network),
+            detections: vec![],
+            metadata: HashMap::new(),
+        };
+
+        let ecs = formatter.to_ecs(&event).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&ecs).unwrap();
+
+        assert_eq!(parsed["network"]["protocol"], "quic");
+        assert_eq!(parsed["network"]["transport"], "udp");
+        assert_eq!(parsed["tls"]["alpn"], "h3");
+        assert_eq!(parsed["tls"]["cipher"], "TLS_AES_128_GCM_SHA256");
+        assert_eq!(parsed["quic"]["version"], "1");
+        assert_eq!(parsed["dns"]["encrypted_transport"], "doq");
+        assert_eq!(parsed["dns"]["resolver"]["ip"], "1.1.1.1");
     }
 
     #[test]

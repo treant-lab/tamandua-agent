@@ -309,6 +309,7 @@ mod network_collector_tests {
             query: "www.example.com".to_string(),
             query_type: "A".to_string(),
             responses: vec!["93.184.216.34".to_string()],
+            ..Default::default()
         };
 
         assert_eq!(event.query, "www.example.com");
@@ -514,7 +515,7 @@ mod detection_tests {
 
 #[cfg(test)]
 mod event_payload_tests {
-    use crate::collectors::{EventPayload, FileEvent, ProcessEvent};
+    use crate::collectors::{EventPayload, FileEvent, NetworkEvent, ProcessEvent};
 
     #[test]
     fn test_event_payload_variants() {
@@ -564,6 +565,47 @@ mod event_payload_tests {
 
         let json = serde_json::to_string(&payload).unwrap();
         assert!(json.contains("test"));
+    }
+
+    #[test]
+    fn test_network_common_enrichment_adds_encrypted_metadata() {
+        let mut network = NetworkEvent {
+            pid: 4242,
+            process_name: "browser.exe".to_string(),
+            local_ip: "10.0.0.10".to_string(),
+            local_port: 51515,
+            remote_ip: "1.1.1.1".to_string(),
+            remote_port: 443,
+            protocol: "udp".to_string(),
+            direction: "outbound".to_string(),
+            sni: Some("cloudflare-dns.com".to_string()),
+            alpn_protocols: vec!["h3".to_string(), "doq".to_string()],
+            cipher_suite: Some("TLS_AES_128_GCM_SHA256".to_string()),
+            tls_extensions: vec!["server_name".to_string(), "alpn".to_string()],
+            ech_present: Some(true),
+            quic_version: Some("1".to_string()),
+            dns_resolver: Some("1.1.1.1".to_string()),
+            ..Default::default()
+        };
+
+        network.apply_common_enrichment();
+
+        assert_eq!(network.protocol, "quic");
+        assert_eq!(network.is_quic, Some(true));
+        assert_eq!(network.is_encrypted, Some(true));
+        assert_eq!(network.alpn.as_deref(), Some("h3"));
+        assert_eq!(network.http_version.as_deref(), Some("3"));
+        assert_eq!(network.encrypted_dns_transport.as_deref(), Some("doq"));
+
+        let enrichment = network.enrichment.as_ref().unwrap();
+        assert_eq!(enrichment["encrypted_metadata"]["alpn"], "h3");
+        assert_eq!(
+            enrichment["encrypted_metadata"]["cipher_suite"],
+            "TLS_AES_128_GCM_SHA256"
+        );
+        assert_eq!(enrichment["encrypted_metadata"]["ech_present"], true);
+        assert_eq!(enrichment["encrypted_metadata"]["quic_version"], "1");
+        assert_eq!(enrichment["encrypted_metadata"]["dns_resolver"], "1.1.1.1");
     }
 }
 

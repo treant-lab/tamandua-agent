@@ -426,8 +426,10 @@ Agent responds with `IsolationStatus`:
 
 ## Documentation
 
-This mirror keeps the public module notes in this README. Extended operational runbooks
-for network isolation are published only after release review.
+### Full Documentation
+
+- [macOS Network Isolation](https://github.com/treant-lab/tamandua/blob/main/docs/MACOS_NETWORK_ISOLATION.md)
+- [Network Isolation Quick Reference](https://github.com/treant-lab/tamandua/blob/main/docs/NETWORK_ISOLATION_QUICK_REFERENCE.md)
 
 ### Related Modules
 

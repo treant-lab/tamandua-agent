@@ -3348,6 +3348,9 @@ mod inner {
                     query: query_name,
                     query_type: query_type_str.to_string(),
                     responses: Vec::new(),
+                    transport: Some("udp".to_string()),
+                    capture_method: Some("ebpf_linux".to_string()),
+                    ..Default::default()
                 }),
             );
 
@@ -4126,6 +4129,9 @@ mod inner {
                     query: query_name,
                     query_type: query_type_str.to_string(),
                     responses,
+                    transport: Some("udp".to_string()),
+                    capture_method: Some("ebpf_linux".to_string()),
+                    ..Default::default()
                 }),
             );
 
