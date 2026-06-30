@@ -10,6 +10,7 @@
 
 use anyhow::{Context, Result};
 use parking_lot::RwLock;
+use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -136,6 +137,37 @@ impl OnnxScannerConfig {
             PathBuf::from("./models/malware_smell.onnx")
         }
     }
+
+    fn with_model_sidecar_threshold(mut self) -> Self {
+        if let Some(threshold) = load_sidecar_threshold(&self.model_path) {
+            self.confidence_threshold = threshold;
+        }
+        self
+    }
+}
+
+fn load_sidecar_threshold(model_path: &Path) -> Option<f32> {
+    let metadata_path = model_path.with_extension("json");
+    let content = std::fs::read_to_string(&metadata_path).ok()?;
+    let payload: JsonValue = serde_json::from_str(&content).ok()?;
+    threshold_from_model_metadata(&payload)
+}
+
+fn threshold_from_model_metadata(payload: &JsonValue) -> Option<f32> {
+    let raw = payload
+        .get("decision")
+        .and_then(|decision| decision.get("malicious_threshold"))
+        .or_else(|| payload.get("malicious_threshold"))
+        .or_else(|| {
+            payload
+                .get("input_contract")
+                .and_then(|contract| contract.get("threshold"))
+        })?;
+    let threshold = raw.as_f64()?;
+    if !(0.0..=1.0).contains(&threshold) {
+        return None;
+    }
+    Some(threshold as f32)
 }
 
 /// Statistics for the ONNX scanner
@@ -189,6 +221,7 @@ impl OnnxScanner {
     /// The scanner will return hash-based fallback results until the model is ready.
     /// Check `is_operational()` or wait on `model_ready_rx` to know when the model is loaded.
     pub fn new(config: OnnxScannerConfig) -> Self {
+        let config = config.with_model_sidecar_threshold();
         let (model_ready_tx, model_ready_rx) = watch::channel(false);
         let session = Arc::new(RwLock::new(None));
         let is_operational = Arc::new(RwLock::new(false));
@@ -844,6 +877,53 @@ mod tests {
         assert_eq!(config.confidence_threshold, 0.7);
         assert_eq!(config.image_size, 64);
         assert_eq!(config.family_labels[0], "benign");
+    }
+
+    #[test]
+    fn test_threshold_from_model_contract_metadata() {
+        let payload = serde_json::json!({
+            "decision": {
+                "malicious_threshold": 0.91
+            },
+            "malicious_threshold": 0.7
+        });
+
+        assert_eq!(threshold_from_model_metadata(&payload), Some(0.91));
+    }
+
+    #[test]
+    fn test_threshold_from_legacy_sidecar_metadata() {
+        let payload = serde_json::json!({
+            "malicious_threshold": 0.86
+        });
+
+        assert_eq!(threshold_from_model_metadata(&payload), Some(0.86));
+    }
+
+    #[test]
+    fn test_threshold_from_model_metadata_rejects_out_of_range_values() {
+        let payload = serde_json::json!({
+            "decision": {
+                "malicious_threshold": 1.2
+            }
+        });
+
+        assert_eq!(threshold_from_model_metadata(&payload), None);
+    }
+
+    #[test]
+    fn test_load_sidecar_threshold_uses_model_stem_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let model_path = dir.path().join("malware_smell.onnx");
+        let metadata_path = dir.path().join("malware_smell.json");
+        std::fs::write(&model_path, b"onnx").unwrap();
+        std::fs::write(
+            &metadata_path,
+            r#"{"decision":{"malicious_threshold":0.93}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(load_sidecar_threshold(&model_path), Some(0.93));
     }
 
     #[test]
