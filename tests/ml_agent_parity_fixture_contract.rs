@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 use tamandua_agent::analyzers::ml_agent_parity_fixture::{
-    load_and_validate_fixture, CANONICAL_LABELS,
+    load_and_validate_fixture, CANONICAL_LABELS, CANONICAL_THRESHOLD,
 };
 
 #[test]
@@ -18,6 +18,8 @@ fn ml_agent_parity_fixture_contract_is_consumable() {
         "20260604t174850z_ml_agent_parity_fixture"
     );
     assert_eq!(summary.sample_count, 6);
+    assert_eq!(summary.malicious_threshold, CANONICAL_THRESHOLD);
+    assert_eq!(fixture.malicious_threshold(), CANONICAL_THRESHOLD);
     assert_eq!(
         fixture.output.labels,
         CANONICAL_LABELS

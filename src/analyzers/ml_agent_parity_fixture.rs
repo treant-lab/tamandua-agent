@@ -42,6 +42,7 @@ pub struct AgentParityFixture {
     pub environment: FixtureEnvironment,
     pub input: FixtureInput,
     pub output: FixtureOutput,
+    pub decision: Option<FixtureDecision>,
     pub agent_tolerance: AgentTolerance,
     pub samples: Vec<FixtureSample>,
 }
@@ -88,6 +89,13 @@ pub struct FixtureOutput {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct FixtureDecision {
+    pub malicious_threshold: f32,
+    pub malicious_rule: String,
+    pub threshold_source: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct AgentTolerance {
     pub max_abs_probability_delta: f32,
     pub verdict_agreement_required: f32,
@@ -119,11 +127,21 @@ pub struct DecodedFixtureSample {
     pub bytes: Vec<u8>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FixtureValidationSummary {
     pub fixture_id: String,
     pub sample_count: usize,
     pub onnx_model_sha256: String,
+    pub malicious_threshold: f32,
+}
+
+impl AgentParityFixture {
+    pub fn malicious_threshold(&self) -> f32 {
+        self.decision
+            .as_ref()
+            .map(|decision| decision.malicious_threshold)
+            .unwrap_or(CANONICAL_THRESHOLD)
+    }
 }
 
 pub fn load_fixture(path: impl AsRef<Path>) -> Result<AgentParityFixture> {
@@ -146,6 +164,7 @@ pub fn validate_fixture(fixture: &AgentParityFixture) -> Result<FixtureValidatio
     validate_header(fixture)?;
     validate_input(&fixture.input)?;
     validate_output(&fixture.output)?;
+    validate_decision(fixture.decision.as_ref())?;
     validate_tolerance(&fixture.agent_tolerance)?;
     validate_sha256(&fixture.onnx_model.sha256, "onnx_model.sha256")?;
     if let Some(metadata_sha256) = &fixture.onnx_model.metadata_sha256 {
@@ -157,13 +176,18 @@ pub fn validate_fixture(fixture: &AgentParityFixture) -> Result<FixtureValidatio
     }
 
     for sample in &fixture.samples {
-        validate_sample(sample, &fixture.output.labels)?;
+        validate_sample(
+            sample,
+            &fixture.output.labels,
+            fixture.malicious_threshold(),
+        )?;
     }
 
     Ok(FixtureValidationSummary {
         fixture_id: fixture.metadata.fixture_id.clone(),
         sample_count: fixture.samples.len(),
         onnx_model_sha256: fixture.onnx_model.sha256.clone(),
+        malicious_threshold: fixture.malicious_threshold(),
     })
 }
 
@@ -263,7 +287,24 @@ fn validate_tolerance(tolerance: &AgentTolerance) -> Result<()> {
     Ok(())
 }
 
-fn validate_sample(sample: &FixtureSample, labels: &[String]) -> Result<()> {
+fn validate_decision(decision: Option<&FixtureDecision>) -> Result<()> {
+    let Some(decision) = decision else {
+        return Ok(());
+    };
+    if !(0.0..=1.0).contains(&decision.malicious_threshold) {
+        bail!("decision.malicious_threshold must be between 0 and 1");
+    }
+    if decision.malicious_rule != "predicted_index_not_0_and_confidence_gte_threshold" {
+        bail!("decision.malicious_rule must be predicted_index_not_0_and_confidence_gte_threshold");
+    }
+    Ok(())
+}
+
+fn validate_sample(
+    sample: &FixtureSample,
+    labels: &[String],
+    malicious_threshold: f32,
+) -> Result<()> {
     if sample.sample_id.trim().is_empty() {
         bail!("sample_id must not be empty");
     }
@@ -323,7 +364,7 @@ fn validate_sample(sample: &FixtureSample, labels: &[String]) -> Result<()> {
         );
     }
     let expected_malicious =
-        sample.expected.predicted_index != 0 && sample.expected.confidence >= CANONICAL_THRESHOLD;
+        sample.expected.predicted_index != 0 && sample.expected.confidence >= malicious_threshold;
     if sample.expected.is_malicious != expected_malicious {
         bail!(
             "sample {} is_malicious does not match threshold logic",

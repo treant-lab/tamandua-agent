@@ -25,7 +25,7 @@ struct Args {
 async fn main() -> Result<()> {
     use anyhow::Context;
     use tamandua_agent::analyzers::ml_agent_parity_fixture::{
-        decode_sample, load_and_validate_fixture, CANONICAL_THRESHOLD,
+        decode_sample, load_and_validate_fixture,
     };
     use tamandua_agent::analyzers::{OnnxScanner, OnnxScannerConfig};
 
@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
 
     let mut scanner = OnnxScanner::new(OnnxScannerConfig {
         model_path,
-        confidence_threshold: CANONICAL_THRESHOLD,
+        confidence_threshold: fixture.malicious_threshold(),
         image_size: fixture.input.image_size,
         family_labels: fixture.output.labels.clone(),
         ..OnnxScannerConfig::default()
